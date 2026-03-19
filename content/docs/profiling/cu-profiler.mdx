@@ -3,4 +3,148 @@ title: CU Profiler
 description: Static compute unit analysis for Quasar programs.
 ---
 
-Content coming soon.
+The Quasar CU profiler measures compute unit usage by statically walking the call graph of your compiled sBPF binary. Unlike runtime profiling, this approach is deterministic and does not require executing the program on a validator.
+
+## How It Works
+
+The profiler:
+
+1. Parses the ELF binary to extract the `.text` section
+2. Walks every instruction in the binary, counting each as one compute unit
+3. Uses DWARF debug information (or symbol tables) to attribute instructions to functions
+4. Builds a call graph with folded stacks for flamegraph generation
+5. Outputs a per-function CU breakdown sorted by cost
+
+Each sBPF instruction costs one compute unit, so the instruction count directly corresponds to CU usage. The `lddw` instruction is a special case -- it occupies two 8-byte slots but counts as a single instruction.
+
+## Running the Profiler
+
+```bash
+quasar profile
+```
+
+This automatically runs a debug build (if needed) and profiles the resulting binary. You can also pass an explicit ELF path:
+
+```bash
+quasar profile target/deploy/my_program.so
+```
+
+The profiler requires debug symbols. If you pass a fully stripped binary, it will report an error. The unstripped binary is available at `target/sbf-solana-solana/release/` or you can build with `quasar build --debug`.
+
+## Reading the Output
+
+On the first run, the profiler shows the top 5 hottest functions:
+
+```
+  my_program  2,816 CU
+     1,200  42.6%  Initialize::verify
+       800  28.4%  Deposit::process
+       400  14.2%  entrypoint
+       300  10.6%  Withdraw::process
+       116   4.1%  +3 more (--expand)
+```
+
+Each line shows:
+- **CU count** -- Number of compute units attributed to that function
+- **Percentage** -- Share of total CU budget
+- **Function name** -- Simplified from the demangled Rust symbol
+
+## Tracking Changes Between Runs
+
+The profiler saves a baseline after each run to `target/profile/.last-profile.<program>`. On subsequent runs, it shows the biggest regressions and improvements:
+
+```
+  my_program  2,816 CU (+42)
+     1,200 (+200)   5.0%  Initialize::verify
+       800 (-158)   3.0%  Deposit::process
+```
+
+- Red `(+N)` indicates a regression (more CU)
+- Green `(-N)` indicates an improvement (fewer CU)
+- The total delta appears next to the program name
+
+This makes it easy to catch CU regressions as you iterate on your program.
+
+## `--expand`: Full Function Table
+
+For a complete breakdown of every function with visual bar charts:
+
+```bash
+quasar profile --expand
+```
+
+Output:
+
+```
+  my_program  2,816 CU
+     1,200  42.6%  ████████████████████  Initialize::verify
+       800  28.4%  █████████████░░░░░░░  Deposit::process
+       400  14.2%  ██████░░░░░░░░░░░░░░  entrypoint
+       300  10.6%  █████░░░░░░░░░░░░░░░  Withdraw::process
+        80   2.8%  █░░░░░░░░░░░░░░░░░░░  PDA::validate
+        36   1.3%  ░░░░░░░░░░░░░░░░░░░░  System::transfer
+  6 functions, 2,816 CU total
+```
+
+When a baseline exists, each function also shows its individual delta:
+
+```
+     1,200  42.6%  ████████████████████  Initialize::verify (+200)
+```
+
+## `--diff`: Compare Against On-Chain Programs
+
+Compare your local build against a deployed on-chain program:
+
+```bash
+quasar profile --diff <PROGRAM_ADDRESS>
+```
+
+This starts a blocking profiler server and opens the diff view in the interactive flamegraph viewer, letting you visually compare the call graphs side by side.
+
+## `--watch`: Continuous Profiling
+
+Re-profile automatically whenever source files change:
+
+```bash
+quasar profile --watch
+```
+
+Combined with `--expand`, this gives you a live CU dashboard as you optimize:
+
+```bash
+quasar profile --watch --expand
+```
+
+## `--share`: Publish to GitHub Gist
+
+Upload the profile as a public GitHub Gist for sharing with your team:
+
+```bash
+quasar profile --share
+```
+
+This requires the [GitHub CLI](https://cli.github.com/) (`gh`) to be installed and authenticated. The profile JSON is uploaded as a gist and a shareable URL is printed.
+
+## Profile Data Format
+
+Each profile run generates a timestamped JSON file in `target/profile/profiles/`:
+
+```
+target/profile/profiles/my_program__2025-03-15-14-30-00-123.profile.json
+```
+
+The JSON contains:
+- Program name and version
+- Binary hash (SHA-256) and size
+- A hierarchical frame tree suitable for flamegraph rendering
+
+This data is consumed by the [interactive flamegraph viewer](/docs/profiling/flamegraphs).
+
+## Tips for Reducing CU
+
+- **Inline aggressively** -- Use `#[inline(always)]` on instruction handlers. Quasar does this by default in generated scaffolding.
+- **Avoid unnecessary checks** -- Every branch in your program adds instructions. Quasar's zero-copy validation is already minimal.
+- **Minimize CPI** -- Cross-program invocations are expensive. The `system_program.transfer()` helper is optimized, but each CPI call still adds overhead.
+- **Use `--expand`** -- Find the hottest functions and focus optimization there.
+- **Profile early and often** -- Use `--watch` during development to catch regressions immediately.
