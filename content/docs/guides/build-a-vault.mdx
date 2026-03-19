@@ -3,4 +3,311 @@ title: Build a Vault
 description: Step-by-step guide to building a SOL vault program with Quasar.
 ---
 
-Content coming soon.
+In this guide, we will build a SOL vault program from scratch using Quasar. The vault allows users to deposit SOL into a program-derived address (PDA) and withdraw it later. This is the simplest complete Quasar program and a great place to start.
+
+By the end, you will understand how to:
+
+- Set up a Quasar project
+- Define instruction account structs with PDA seeds and constraints
+- Perform system program CPI for SOL transfers
+- Withdraw lamports directly from a PDA
+- Test your program with Mollusk
+
+## Project setup
+
+Start by creating a new Quasar project. If you have the Quasar CLI installed:
+
+```bash
+quasar init quasar-vault
+cd quasar-vault
+```
+
+Your `Cargo.toml` should look like this:
+
+```toml
+[package]
+name = "quasar-vault"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+alloc = []
+client = []
+debug = []
+
+[dependencies]
+quasar-lang = { version = "0.1.0" }
+```
+
+The `crate-type = ["cdylib"]` tells Cargo to produce a shared library that the Solana runtime can load. The `debug` feature enables verbose error logging during development.
+
+## File structure
+
+Our vault program is minimal -- just two instructions, no persistent state account:
+
+```
+src/
+  lib.rs                # Program entrypoint and instruction dispatch
+  instructions/
+    mod.rs              # Re-exports
+    deposit.rs          # Deposit SOL into the vault PDA
+    withdraw.rs         # Withdraw SOL from the vault PDA
+```
+
+The vault itself is an `UncheckedAccount` PDA. We do not need an `#[account]` struct because we are only storing raw lamports -- no custom data.
+
+## The program entrypoint
+
+Let's start with `lib.rs`, which declares the program ID and defines the instruction dispatch:
+
+```rust
+#![no_std]
+
+use quasar_lang::prelude::*;
+
+mod instructions;
+use instructions::*;
+
+declare_id!("33333333333333333333333333333333333333333333");
+
+#[program]
+mod quasar_vault {
+    use super::*;
+
+    #[instruction(discriminator = 0)]
+    pub fn deposit(ctx: Ctx<Deposit>, amount: u64) -> Result<(), ProgramError> {
+        ctx.accounts.deposit(amount)
+    }
+
+    #[instruction(discriminator = 1)]
+    pub fn withdraw(ctx: Ctx<Withdraw>, amount: u64) -> Result<(), ProgramError> {
+        ctx.accounts.withdraw(amount)
+    }
+}
+```
+
+Let's walk through this:
+
+- **`#![no_std]`** -- Quasar programs run in the SBF runtime without the standard library. The framework provides everything you need through its prelude.
+- **`declare_id!`** -- Sets the program's on-chain address. Replace this with your actual program ID after deployment.
+- **`#[program]`** -- The macro that generates the entrypoint, dispatch table, panic handler, and allocator. See [Program Structure](/docs/core-concepts/program-structure) for details.
+- **`#[instruction(discriminator = 0)]`** -- Each instruction gets a unique discriminator byte. The runtime uses this to route incoming transactions to the right handler.
+- **`Ctx<Deposit>`** -- A typed context that provides validated accounts and PDA bumps. The `Deposit` struct (defined next) specifies which accounts this instruction expects.
+
+Both instruction handlers are thin wrappers that delegate to methods on the accounts struct. This is the standard Quasar pattern -- keep the `#[program]` module as a routing layer, and put the logic in the `impl` block.
+
+The `instructions/mod.rs` re-exports both instruction modules:
+
+```rust
+pub mod deposit;
+pub use deposit::*;
+
+pub mod withdraw;
+pub use withdraw::*;
+```
+
+## The deposit instruction
+
+Create `instructions/deposit.rs`:
+
+```rust
+use quasar_lang::prelude::*;
+
+#[derive(Accounts)]
+pub struct Deposit<'info> {
+    pub user: &'info mut Signer,
+    #[account(mut, seeds = [b"vault", user], bump)]
+    pub vault: &'info mut UncheckedAccount,
+    pub system_program: &'info Program<System>,
+}
+
+impl<'info> Deposit<'info> {
+    #[inline(always)]
+    pub fn deposit(&self, amount: u64) -> Result<(), ProgramError> {
+        self.system_program
+            .transfer(self.user, self.vault, amount)
+            .invoke()
+    }
+}
+```
+
+### The accounts struct
+
+The `#[derive(Accounts)]` macro generates all the deserialization and validation logic for the accounts this instruction needs. Let's look at each field:
+
+**`user: &'info mut Signer`** -- The wallet depositing SOL. `Signer` verifies the account has signed the transaction. The `mut` reference means we need to modify its lamports (they decrease during the transfer).
+
+**`vault: &'info mut UncheckedAccount`** -- The vault PDA that receives SOL. The `#[account]` attribute applies constraints:
+
+- `mut` -- the account's lamports will change.
+- `seeds = [b"vault", user]` -- verifies this is the correct PDA derived from the seed `"vault"` and the user's address. The `user` seed reference means the framework substitutes the address of the `user` field from this same struct.
+- `bump` -- tells the framework to derive and store the PDA bump seed, making it available via `ctx.bumps`.
+
+We use `UncheckedAccount` because the vault holds only lamports -- there is no custom data to deserialize. For accounts with structured data, you would use `Account<MyState>` instead. See [Accounts and Validation](/docs/core-concepts/accounts-and-validation).
+
+**`system_program: &'info Program<System>`** -- The system program, needed for the SOL transfer CPI. `Program<System>` validates that this account is the actual system program.
+
+### The handler
+
+The `deposit` method performs a single CPI: a system program transfer from the user to the vault.
+
+```rust
+self.system_program
+    .transfer(self.user, self.vault, amount)
+    .invoke()
+```
+
+Quasar's CPI builders are type-safe and stack-allocated -- no heap allocations. The `.transfer()` method constructs the CPI instruction, and `.invoke()` executes it. The system program debits the user's account and credits the vault PDA. For more on CPI patterns, see [Cross-Program Invocations](/docs/core-concepts/cpi).
+
+The `#[inline(always)]` annotation is a performance hint. Since Quasar programs target minimal compute unit usage, inlining avoids function call overhead.
+
+## The withdraw instruction
+
+Create `instructions/withdraw.rs`:
+
+```rust
+use quasar_lang::prelude::*;
+
+#[derive(Accounts)]
+pub struct Withdraw<'info> {
+    pub user: &'info mut Signer,
+    #[account(mut, seeds = [b"vault", user], bump)]
+    pub vault: &'info mut UncheckedAccount,
+}
+
+impl<'info> Withdraw<'info> {
+    #[inline(always)]
+    pub fn withdraw(&self, amount: u64) -> Result<(), ProgramError> {
+        let vault = self.vault.to_account_view();
+        let user = self.user.to_account_view();
+        set_lamports(vault, vault.lamports() - amount);
+        set_lamports(user, user.lamports() + amount);
+        Ok(())
+    }
+}
+```
+
+### The accounts struct
+
+The `Withdraw` struct is almost identical to `Deposit`, but notice there is no `system_program` field. We do not need the system program for a withdrawal -- and that is the key insight here.
+
+### The handler
+
+Withdrawing from a PDA that our program owns does not require a CPI. Since the vault PDA is owned by our program (it was derived with our program ID as part of `find_program_address`), we can directly manipulate its lamports.
+
+```rust
+let vault = self.vault.to_account_view();
+let user = self.user.to_account_view();
+set_lamports(vault, vault.lamports() - amount);
+set_lamports(user, user.lamports() + amount);
+```
+
+The `to_account_view()` method gives us a low-level view of the account's data in the SVM input buffer. We then use `set_lamports` to directly modify both accounts' balances. This is a direct lamport transfer -- no CPI overhead, no additional compute units for invoking the system program.
+
+This pattern is safe because:
+
+1. The `Signer` check on `user` ensures only the original depositor can withdraw (since the vault PDA seeds include the user's address).
+2. The PDA seed verification on `vault` ensures we are modifying the correct vault.
+3. The Solana runtime verifies that total lamports across all accounts are conserved after instruction execution.
+
+## How the PDA works
+
+The vault PDA is derived from two seeds: the literal bytes `"vault"` and the user's public key. This means every user gets their own unique vault address:
+
+```
+vault_address = PDA(["vault", user_pubkey], program_id)
+```
+
+When you write `seeds = [b"vault", user]` in the account attribute, Quasar generates code to:
+
+1. Derive the PDA using `find_program_address`.
+2. Verify the passed-in vault account matches the derived address.
+3. Store the bump seed in `ctx.bumps` for use in signed CPIs (though we don't need it in this simple example).
+
+For a deeper explanation of PDA mechanics, see [Program Derived Addresses](/docs/core-concepts/pda).
+
+## Testing with Mollusk
+
+Quasar programs can be tested using [Mollusk](https://github.com/buffalojoec/mollusk), a lightweight SVM simulator. Add the test dependencies to your `Cargo.toml`:
+
+```toml
+[dev-dependencies]
+mollusk-svm = "0.10.3"
+solana-account = { version = "3.4.0" }
+solana-instruction = { version = "3.2.0", features = ["bincode"] }
+```
+
+Here is the deposit test:
+
+```rust
+#[test]
+fn test_deposit() {
+    let mollusk = setup();
+
+    let (system_program, system_program_account) = keyed_account_for_system_program();
+
+    let user = Address::new_unique();
+    let user_account = Account::new(10_000_000_000, 0, &system_program);
+
+    let (vault, _vault_bump) =
+        Address::find_program_address(&[b"vault", user.as_ref()], &crate::ID);
+    let vault_account = Account::new(0, 0, &system_program);
+
+    let deposit_amount: u64 = 1_000_000_000;
+
+    let instruction: Instruction = DepositInstruction {
+        user,
+        vault,
+        system_program,
+        amount: deposit_amount,
+    }
+    .into();
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (user, user_account.clone()),
+            (vault, vault_account.clone()),
+            (system_program, system_program_account.clone()),
+        ],
+    );
+
+    assert!(result.program_result.is_ok());
+
+    let user_after = result.resulting_accounts[0].1.lamports;
+    let vault_after = result.resulting_accounts[1].1.lamports;
+
+    assert_eq!(user_after, 10_000_000_000 - deposit_amount);
+    assert_eq!(vault_after, deposit_amount);
+}
+```
+
+The test sets up a user with 10 SOL, derives the vault PDA, and calls the deposit instruction for 1 SOL. After execution, it verifies that lamports moved correctly from the user to the vault.
+
+The withdraw test follows a two-step pattern -- deposit first, then withdraw. Notice that the withdraw instruction only passes two accounts -- no system program is needed since we are doing a direct lamport transfer rather than a CPI.
+
+Run the tests with:
+
+```bash
+cargo test-sbf
+```
+
+## Summary
+
+This vault program demonstrates the core Quasar patterns:
+
+- **Account structs with constraints** -- `#[derive(Accounts)]` generates all validation, PDA derivation, and signer checks.
+- **CPI for deposits** -- The system program transfer is type-safe and stack-allocated.
+- **Direct lamport manipulation for withdrawals** -- No CPI overhead when your program owns the source account.
+- **PDA-based addressing** -- Each user gets a deterministic vault address derived from their public key.
+
+The complete source code is available in the [Quasar repository](https://github.com/quasar-lab/quasar/tree/master/examples/vault).
+
+## Next steps
+
+- [Build an Escrow](/docs/guides/build-an-escrow) -- a more complex program with SPL token transfers, account initialization, and event emission.
+- [Build a Multisig](/docs/guides/build-a-multisig) -- dynamic accounts, remaining accounts, and threshold-based authorization.
+- [Accounts and Validation](/docs/core-concepts/accounts-and-validation) -- deep dive into all account types and constraint attributes.
