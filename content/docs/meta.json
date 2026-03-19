@@ -1,0 +1,25 @@
+{
+  "title": "Documentation",
+  "pages": [
+    "---Getting Started---",
+    "getting-started",
+    "---Core Concepts---",
+    "core-concepts",
+    "---Zero-Copy Deep Dive---",
+    "zero-copy",
+    "---Features---",
+    "features",
+    "---SPL Tokens---",
+    "spl-tokens",
+    "---Clients---",
+    "clients",
+    "---Testing---",
+    "testing",
+    "---Profiling & Performance---",
+    "profiling",
+    "---Guides---",
+    "guides",
+    "---References---",
+    "references"
+  ]
+}

@@ -1,0 +1,4 @@
+{
+  "title": "Zero-Copy Deep Dive",
+  "pages": ["pod-types", "account-layout", "dynamic-fields", "safety-model"]
+}

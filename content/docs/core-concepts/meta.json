@@ -1,0 +1,4 @@
+{
+  "title": "Core Concepts",
+  "pages": ["program-structure", "accounts-and-validation", "instructions", "pda", "cpi", "idl"]
+}
