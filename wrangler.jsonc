@@ -22,9 +22,6 @@
       "bucket_name": "quasar-docs-opennext-cache"
     }
   ],
-  "images": {
-    "binding": "IMAGES"
-  },
   "observability": {
     "enabled": true
   }
