@@ -1,6 +1,216 @@
 ---
 title: Pod Types
-description: Plain-old-data types that can be safely cast from raw byte buffers.
+description: Plain-old-data types that can be safely cast from raw byte buffers without alignment concerns.
 ---
 
-Content coming soon.
+Solana programs receive account data as raw byte buffers. These buffers have **alignment 1** -- they are contiguous sequences of bytes with no alignment guarantees beyond that. If you try to cast such a buffer to a struct containing a `u64` (which requires alignment 8), you get undefined behavior, even if the data is never read through the misaligned reference.
+
+Quasar solves this with **Pod types**: alignment-1 wrappers around native integers that can be safely cast from any byte boundary.
+
+## Why alignment matters on the SVM
+
+When a Solana program is invoked, the runtime serializes all account data into a single input buffer. This buffer is a flat `&[u8]` -- every byte sits at alignment 1. Native Rust integers have higher alignment requirements:
+
+| Type | Size | Required alignment |
+|------|------|--------------------|
+| `u16` | 2 bytes | 2 |
+| `u32` | 4 bytes | 4 |
+| `u64` | 8 bytes | 8 |
+| `u128` | 16 bytes | 16 |
+
+Casting `&[u8]` to `&u64` is undefined behavior under the Rust memory model, regardless of whether the pointer happens to be aligned at runtime. The compiler is allowed to assume references meet their type's alignment requirement and may emit instructions that fault on misaligned access.
+
+## The Pod solution
+
+Each Pod type is a `#[repr(transparent)]` wrapper around a `[u8; N]` array:
+
+```rust
+#[repr(transparent)]
+#[derive(Copy, Clone, Default)]
+pub struct PodU64([u8; 8]);
+```
+
+Because `[u8; 8]` has alignment 1, `PodU64` also has alignment 1 thanks to `#[repr(transparent)]`. This means a pointer cast from `&[u8]` to `&PodU64` is always valid -- no alignment trap, no undefined behavior.
+
+The Pod crate (`quasar-pod`) is `#![no_std]` and defines the following types:
+
+### Unsigned integers
+
+| Pod type | Native type | Size | Alignment |
+|----------|-------------|------|-----------|
+| `PodU16` | `u16` | 2 bytes | 1 |
+| `PodU32` | `u32` | 4 bytes | 1 |
+| `PodU64` | `u64` | 8 bytes | 1 |
+| `PodU128` | `u128` | 16 bytes | 1 |
+
+### Signed integers
+
+| Pod type | Native type | Size | Alignment |
+|----------|-------------|------|-----------|
+| `PodI16` | `i16` | 2 bytes | 1 |
+| `PodI32` | `i32` | 4 bytes | 1 |
+| `PodI64` | `i64` | 8 bytes | 1 |
+| `PodI128` | `i128` | 16 bytes | 1 |
+
+### Boolean
+
+| Pod type | Native type | Size | Alignment |
+|----------|-------------|------|-----------|
+| `PodBool` | `bool` | 1 byte | 1 |
+
+`PodBool` treats any non-zero byte as `true` and `0x00` as `false`. The canonical representation of `true` is `0x01`.
+
+## Conversions
+
+Pod types convert to and from their native counterparts via `From`/`Into`:
+
+```rust
+// Native to Pod
+let amount = PodU64::from(1_000_000u64);
+
+// Pod to native
+let raw: u64 = amount.into();
+
+// Read without consuming (returns native type)
+let value: u64 = amount.get();
+```
+
+The `.get()` method converts from little-endian bytes to the native integer. On little-endian targets (which includes SBF/Solana), this is a no-op -- the compiler optimizes it to a direct memory read.
+
+Pod types also implement `PartialEq` and `PartialOrd` against both their Pod type and their native type:
+
+```rust
+let a = PodU64::from(100);
+let b = PodU64::from(200);
+
+assert!(a < b);           // Pod vs Pod
+assert!(a == 100u64);     // Pod vs native
+assert!(a < 200u64);      // Pod vs native
+```
+
+## Arithmetic
+
+Pod types support all standard arithmetic operators (`+`, `-`, `*`, `/`, `%`) as well as their assignment variants (`+=`, `-=`, etc.). The arithmetic behavior depends on the build profile:
+
+- **Debug builds**: Operators use checked arithmetic and **panic on overflow**. This catches bugs during development and testing.
+- **Release builds**: Operators use **wrapping** arithmetic for CU efficiency. No branch, no panic, no overhead.
+
+```rust
+let a = PodU64::from(100);
+let b = PodU64::from(50);
+
+let sum = a + b;           // PodU64(150)
+let diff = a - b;          // PodU64(50)
+let product = a * 3u64;    // PodU64(300)
+
+let mut counter = PodU64::from(0);
+counter += 1u64;           // PodU64(1)
+```
+
+For cases where overflow detection is required in all build profiles, use the checked methods:
+
+```rust
+let balance = PodU64::from(100);
+
+match balance.checked_sub(PodU64::from(200)) {
+    Some(result) => { /* success */ }
+    None => { /* underflow -- return an error */ }
+}
+```
+
+The full set of checked methods:
+
+| Method | Returns |
+|--------|---------|
+| `checked_add(rhs)` | `Option<Self>` -- `None` on overflow |
+| `checked_sub(rhs)` | `Option<Self>` -- `None` on underflow |
+| `checked_mul(rhs)` | `Option<Self>` -- `None` on overflow |
+| `checked_div(rhs)` | `Option<Self>` -- `None` if divisor is zero |
+
+Saturating variants are also available for cases where clamping at the numeric bounds is the correct behavior:
+
+```rust
+let max = PodU64::from(u64::MAX);
+let result = max.saturating_add(PodU64::from(1));
+assert_eq!(result, PodU64::MAX); // clamped, not wrapped
+```
+
+### Bitwise operations
+
+Pod types support bitwise AND, OR, XOR, left/right shift, and NOT:
+
+```rust
+let flags = PodU32::from(0b1010);
+let mask  = PodU32::from(0b1100);
+
+let result = flags & mask;  // PodU32(0b1000)
+let shifted = flags << 2;   // PodU32(0b101000)
+```
+
+### Signed types
+
+Signed Pod types (`PodI16` through `PodI128`) additionally support negation:
+
+```rust
+let positive = PodI64::from(42);
+let negative = -positive;
+assert_eq!(negative.get(), -42i64);
+```
+
+## Constants
+
+Each Pod type exposes three constants:
+
+```rust
+PodU64::ZERO  // The zero value: PodU64([0; 8])
+PodU64::MAX   // The maximum: PodU64(u64::MAX.to_le_bytes())
+PodU64::MIN   // The minimum: PodU64(u64::MIN.to_le_bytes())
+```
+
+The `is_zero()` method provides a fast zero check by comparing the raw byte array:
+
+```rust
+let amount = PodU64::ZERO;
+assert!(amount.is_zero());
+```
+
+## Compile-time safety
+
+The Pod crate includes compile-time assertions that verify every Pod type has the correct size and alignment:
+
+```rust
+const _: () = assert!(core::mem::align_of::<PodU64>() == 1);
+const _: () = assert!(core::mem::size_of::<PodU64>() == 8);
+const _: () = assert!(core::mem::align_of::<PodBool>() == 1);
+const _: () = assert!(core::mem::size_of::<PodBool>() == 1);
+// ... and so on for every Pod type
+```
+
+These assertions fire at compile time if a code change ever breaks the alignment-1 invariant. This is the same pattern used throughout Quasar -- the [Safety Model](/docs/zero-copy/safety-model) documents the full catalog of compile-time assertions.
+
+## When to use Pod types vs native types
+
+You rarely need to use Pod types directly. The `#[account]` macro automatically maps native Rust types to their Pod companions in the generated zero-copy struct:
+
+```rust
+#[account(discriminator = 1)]
+pub struct Escrow {
+    pub maker: Address,     // Address is already [u8; 32] -- alignment 1
+    pub mint_a: Address,
+    pub mint_b: Address,
+    pub maker_ta_b: Address,
+    pub receive: u64,       // mapped to PodU64 in the ZC companion
+    pub bump: u8,           // u8 already has alignment 1
+}
+```
+
+When you access `escrow.receive` through the zero-copy view, you get a `PodU64` reference. The type mapping is transparent -- you write `u64` in your struct definition, and Quasar handles the rest.
+
+Use Pod types explicitly when:
+
+- **Building custom zero-copy structs** that are not generated by `#[account]`
+- **Working with raw account data** outside the macro system
+- **Performing arithmetic** on values read from zero-copy views (they are already Pod types)
+- **Defining SPL token or interface account layouts** where you need manual `#[repr(C)]` structs
+
+For the complete type mapping table, see [Account Layout](/docs/zero-copy/account-layout).

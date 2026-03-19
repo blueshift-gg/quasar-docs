@@ -3,4 +3,301 @@ title: Error Handling
 description: Defining and returning custom errors from Quasar programs.
 ---
 
-Content coming soon.
+Quasar programs return errors as `ProgramError::Custom(u32)` values. The framework provides two layers of error codes: framework-level `QuasarError` codes (starting at 3000) and program-specific error codes defined with the `#[error_code]` macro (starting at 6000 by default). Assertion macros (`require!`, `require_eq!`, `require_keys_eq!`) provide concise error-returning patterns.
+
+## Error code layout
+
+Error codes are partitioned into ranges to avoid collisions:
+
+| Range | Owner | Purpose |
+|-------|-------|---------|
+| 0--29 | Solana runtime | Built-in `ProgramError` variants |
+| 3000--3999 | Quasar framework | `QuasarError` variants |
+| 6000+ | Your program | `#[error_code]` enums |
+
+The gap between 30 and 2999 is unused, reserved for future Solana or framework use. The gap between 4000 and 5999 separates framework errors from program errors.
+
+## QuasarError: framework-level errors
+
+`QuasarError` is defined in `quasar_lang::error` and covers validation failures that the framework detects automatically during account parsing:
+
+```rust
+#[error_code]
+pub enum QuasarError {
+    /// Account data is all zeros or has no discriminator.
+    AccountNotInitialized = 3000,
+    /// Account discriminator is already set (double-init attempt).
+    AccountAlreadyInitialized,
+    /// PDA derivation does not match the expected address.
+    InvalidPda,
+    /// Seeds provided for PDA verification are invalid.
+    InvalidSeeds,
+    /// A `#[account(constraint = ...)]` expression evaluated to false.
+    ConstraintViolation,
+    /// `#[account(has_one = ...)]` field does not match.
+    HasOneMismatch,
+    /// Account discriminator does not match the expected value.
+    InvalidDiscriminator,
+    /// Account data is too small for the declared layout.
+    InsufficientSpace,
+    /// Account balance is below the rent-exemption minimum.
+    AccountNotRentExempt,
+    /// Account owner does not match the expected program.
+    AccountOwnedByWrongProgram,
+    /// Account was not passed as writable.
+    AccountNotMutable,
+    /// Account was not passed as a signer.
+    AccountNotSigner,
+    /// Account address does not match the expected value.
+    AddressMismatch,
+    /// A dynamic-length field exceeds its maximum byte length.
+    DynamicFieldTooLong,
+    /// More remaining accounts than can fit in the buffer.
+    RemainingAccountsOverflow,
+}
+```
+
+These errors are auto-numbered starting from 3000. `AccountNotInitialized` is 3000, `AccountAlreadyInitialized` is 3001, and so on through `RemainingAccountsOverflow` at 3014.
+
+You will encounter these errors during account validation (when the `#[derive(Accounts)]` code runs). For example:
+
+- Passing an account with the wrong owner triggers `AccountOwnedByWrongProgram` (3009).
+- Passing a non-writable account where `mut` is required triggers `AccountNotMutable` (3010).
+- Trying to init an account that already has a non-zero discriminator triggers `AccountAlreadyInitialized` (3001).
+- Writing a dynamic string that exceeds its maximum length triggers `DynamicFieldTooLong` (3013).
+
+## Defining program errors with `#[error_code]`
+
+Define your own error enum with the `#[error_code]` attribute macro:
+
+```rust
+use quasar_lang::prelude::*;
+
+#[error_code]
+pub enum EscrowError {
+    InvalidAmount = 6000,
+    ExpirationPassed,
+    NotYetExpired,
+}
+```
+
+The macro generates:
+
+1. A `#[repr(u32)]` attribute on the enum, ensuring each variant maps to a stable integer.
+2. A `From<EscrowError> for ProgramError` implementation that converts variants to `ProgramError::Custom(code)`.
+3. A `TryFrom<u32> for EscrowError` implementation for decoding error codes back to variants.
+
+### Auto-numbering
+
+Variants auto-increment from the first explicit discriminant. In the example above:
+
+| Variant | Code |
+|---------|------|
+| `InvalidAmount` | 6000 |
+| `ExpirationPassed` | 6001 |
+| `NotYetExpired` | 6002 |
+
+You can reset the numbering at any variant:
+
+```rust
+#[error_code]
+pub enum TestError {
+    Hello = 0,
+    World,           // 1
+    ExplicitNum = 100,
+    RequireFailed,   // 101
+    RequireEqFailed, // 102
+    ConstraintCustom, // 103
+    AddressCustom,   // 104
+}
+```
+
+The convention is to start at 6000 for Anchor compatibility, but any `u32` value is valid.
+
+### Using program errors
+
+Return errors from instruction handlers by converting them to `ProgramError`:
+
+```rust
+pub fn make_escrow(&mut self, amount: u64) -> Result<(), ProgramError> {
+    if amount == 0 {
+        return Err(EscrowError::InvalidAmount.into());
+    }
+    // ...
+    Ok(())
+}
+```
+
+The `.into()` call uses the generated `From` impl to convert `EscrowError::InvalidAmount` to `ProgramError::Custom(6000)`.
+
+## Assertion macros
+
+Quasar provides three assertion macros that return early with a typed error on failure. These are defined in `quasar_lang::macros` and re-exported through the prelude.
+
+### `require!`
+
+General boolean assertion:
+
+```rust
+require!(condition, error)
+```
+
+Expands to:
+
+```rust
+if !(condition) {
+    return Err(error.into());
+}
+```
+
+Usage:
+
+```rust
+pub fn create_multisig(
+    &mut self,
+    threshold: u8,
+    count: usize,
+) -> Result<(), ProgramError> {
+    require!(
+        threshold > 0 && (threshold as usize) <= count,
+        ProgramError::InvalidArgument
+    );
+    // ...
+    Ok(())
+}
+```
+
+### `require_eq!`
+
+Equality assertion:
+
+```rust
+require_eq!(left, right, error)
+```
+
+Expands to:
+
+```rust
+if left != right {
+    return Err(error.into());
+}
+```
+
+Usage:
+
+```rust
+require_eq!(
+    escrow.maker,
+    *ctx.accounts.maker.address(),
+    QuasarError::HasOneMismatch
+);
+```
+
+### `require_keys_eq!`
+
+Address comparison assertion. Uses Quasar's `keys_eq` function for constant-time address comparison:
+
+```rust
+require_keys_eq!(left, right, error)
+```
+
+Expands to:
+
+```rust
+if !quasar_lang::keys_eq(&left, &right) {
+    return Err(error.into());
+}
+```
+
+Usage:
+
+```rust
+require_keys_eq!(
+    *token_account.owner(),
+    expected_owner,
+    QuasarError::AccountOwnedByWrongProgram
+);
+```
+
+Use `require_keys_eq!` instead of `require_eq!` when comparing `Address` values. The `keys_eq` function performs a byte-level comparison that is consistent across all contexts.
+
+### Important note
+
+There is no `require_neq!` macro. If you need an inequality check, use `require!` with a `!=` comparison:
+
+```rust
+require!(left != right, MyError::MustBeDifferent);
+```
+
+## Error propagation
+
+Quasar instruction handlers return `Result<(), ProgramError>`. The `?` operator propagates errors naturally:
+
+```rust
+pub fn handler(&mut self, amount: u64) -> Result<(), ProgramError> {
+    // Framework errors propagate via ?
+    self.config.set_label(self.creator, "new label")?;
+
+    // Custom errors propagate via .into() + ?
+    if amount == 0 {
+        return Err(EscrowError::InvalidAmount.into());
+    }
+
+    // CPI errors propagate via ?
+    self.system_program
+        .transfer(self.vault, self.recipient, amount)
+        .invoke_signed(&seeds)?;
+
+    Ok(())
+}
+```
+
+All error types that implement `Into<ProgramError>` work with this pattern:
+
+- `QuasarError` variants (framework errors)
+- Your `#[error_code]` enum variants (program errors)
+- `ProgramError` variants directly (Solana built-in errors)
+
+## Error codes in the IDL
+
+The Quasar IDL generator includes error definitions so that client libraries can decode error codes to human-readable messages. The IDL contains:
+
+- The enum name and each variant name.
+- The numeric code for each variant.
+- The doc comment (if present) as a description string.
+
+This allows TypeScript clients, for example, to catch a `ProgramError::Custom(6001)` and display "ExpirationPassed" instead of a raw number.
+
+## Best practices
+
+1. **Start program errors at 6000** for compatibility with Anchor clients and error decoders that expect this convention.
+
+2. **Use doc comments** on error variants. These become the user-facing error messages in the IDL:
+
+   ```rust
+   #[error_code]
+   pub enum MyError {
+       /// The deposit amount must be greater than zero.
+       InvalidAmount = 6000,
+       /// The escrow has already expired.
+       ExpirationPassed,
+   }
+   ```
+
+3. **Prefer `require!` macros** over manual `if/return` patterns for consistency and readability.
+
+4. **Use specific error variants** rather than generic `ProgramError::InvalidArgument`. Specific codes make debugging easier for both developers and users.
+
+5. **Keep error enums in a dedicated `errors.rs` module** for discoverability:
+
+   ```rust
+   // src/errors.rs
+   use quasar_lang::prelude::*;
+
+   #[error_code]
+   pub enum MyProgramError {
+       InvalidAmount = 6000,
+       Unauthorized,
+       Expired,
+   }
+   ```

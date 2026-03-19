@@ -3,4 +3,316 @@ title: Dynamic Fields
 description: Working with variable-length data like strings and vectors in zero-copy accounts.
 ---
 
-Content coming soon.
+Fixed-size accounts are straightforward: the `#[account]` macro generates a `#[repr(C)]` companion struct, and every field access is a pointer dereference at a known offset. But many programs need variable-length data -- a user's display name, a list of signers, or a configurable set of parameters.
+
+Quasar supports dynamic fields through **marker types** that the `#[account]` macro recognizes and expands into length-prefixed wire formats. The key constraint: dynamic fields must come **after** all fixed fields.
+
+## The marker types
+
+Quasar provides two marker types in `quasar_lang::dynamic`:
+
+### `String<P, N>`
+
+A variable-length UTF-8 string stored inline in the account data.
+
+- `P` -- length prefix type (`u8`, `u16`, or `u32`). Determines how the byte length is encoded. Default: `u32`.
+- `N` -- maximum byte length. Validated at write time. Default: `1024`.
+
+```rust
+pub name: String,                // u32 prefix, max 1024 bytes
+pub bio: String<u16, 4096>,      // u16 prefix, max 4096 bytes
+pub tag: String<u8, 32>,         // u8 prefix, max 32 bytes
+```
+
+The wire format is: `[prefix: P bytes] [utf-8 data: len bytes]`
+
+The prefix encodes the **byte length** of the string data (not the character count).
+
+### `Vec<T, P, N>`
+
+A variable-length array of fixed-size elements stored inline in the account data.
+
+- `T` -- element type. Must be fixed-size with alignment 1 (e.g., `Address`, `PodU64`).
+- `P` -- count prefix type (`u8`, `u16`, or `u32`). Determines how the element count is encoded. Default: `u32`.
+- `N` -- maximum element count. Validated at write time. Default: `8`.
+
+```rust
+pub signers: Vec<Address>,           // u32 prefix, max 8 elements
+pub scores: Vec<PodU64, u8, 4>,      // u8 prefix, max 4 elements
+pub tags: Vec<Address, u16, 100>,    // u16 prefix, max 100 elements
+```
+
+The wire format is: `[prefix: P bytes] [elements: count * size_of::<T>() bytes]`
+
+The prefix encodes the **element count** (not the byte length). Elements are packed contiguously after the prefix with no padding.
+
+A compile-time assertion enforces that `T` has alignment 1:
+
+```rust
+const _: () = assert!(
+    core::mem::align_of::<T>() == 1,
+    "dynamic Vec element type must have alignment 1"
+);
+```
+
+## Borsh compatibility
+
+The default prefix type for both `String` and `Vec` is `u32`, which matches the Borsh serialization format. If your account data needs to be read by clients or other programs that expect Borsh encoding, use the defaults:
+
+```rust
+pub name: String,        // u32 prefix -- Borsh-compatible
+pub items: Vec<Address>, // u32 prefix -- Borsh-compatible
+```
+
+For programs that do not need Borsh compatibility, smaller prefixes save space:
+
+```rust
+pub name: String<u8, 32>,        // 1-byte prefix saves 3 bytes
+pub items: Vec<Address, u8, 10>, // 1-byte prefix saves 3 bytes
+```
+
+## A real example: the multisig config
+
+The multisig example defines a dynamic account with both a string and a vector:
+
+```rust
+#[account(discriminator = 1)]
+pub struct MultisigConfig<'a> {
+    pub creator: Address,
+    pub threshold: u8,
+    pub bump: u8,
+    pub label: String<'a, 32>,
+    pub signers: Vec<'a, Address, 10>,
+}
+```
+
+Note the lifetime parameter `'a`. Structs with dynamic fields **must** have a lifetime parameter -- the macro requires it because the generated accessor methods return borrowed references (`&str`, `&[Address]`) that borrow from the account data buffer.
+
+### Memory layout
+
+The wire format for this account is:
+
+```
+Offset     Size         Field
+------     ----         -----
+0          1            discriminator (0x01)
+1          32           creator: Address
+33         1            threshold: u8
+34         1            bump: u8
+35         4            label length prefix (u32, little-endian)
+39         0..32        label UTF-8 data
+39+L       4            signers count prefix (u32, little-endian)
+43+L       0..320       signers data (up to 10 * 32 bytes)
+```
+
+Where `L` is the actual byte length of the label string.
+
+The `Space` trait for dynamic accounts reports the **minimum** space (all dynamic fields empty):
+
+```rust
+impl Space for MultisigConfig<'_> {
+    const SPACE: usize = 1       // discriminator
+        + size_of::<MultisigConfigZc>()  // fixed fields (34 bytes)
+        + 4                      // label prefix
+        + 4;                     // signers prefix
+    // = 43 bytes minimum
+}
+```
+
+The companion struct (`MultisigConfigZc`) contains only the fixed fields:
+
+```rust
+#[repr(C)]
+pub struct MultisigConfigZc {
+    pub creator: Address,   // 32 bytes
+    pub threshold: u8,      // 1 byte
+    pub bump: u8,           // 1 byte
+}
+```
+
+Dynamic accounts also expose `MIN_SPACE` and `MAX_SPACE` constants:
+
+```rust
+MultisigConfig::MIN_SPACE  // 43 bytes (all dynamic fields empty)
+MultisigConfig::MAX_SPACE  // 43 + 32 + 10 * 32 = 395 bytes (all fields at max)
+```
+
+## Ordering restriction: fixed fields first
+
+Dynamic fields must come **after** all fixed fields. This is enforced at compile time:
+
+```rust
+// This compiles:
+pub struct Valid<'a> {
+    pub owner: Address,           // fixed
+    pub balance: u64,             // fixed
+    pub name: String<'a, 32>,    // dynamic -- after all fixed fields
+}
+
+// This does NOT compile:
+pub struct Invalid<'a> {
+    pub owner: Address,           // fixed
+    pub name: String<'a, 32>,    // dynamic
+    pub balance: u64,             // ERROR: fixed field after dynamic field
+}
+```
+
+The error message is: `fixed fields must precede all dynamic fields (String/Vec)`.
+
+This restriction exists because the ZC companion struct maps 1:1 with the fixed-field header. Dynamic fields are accessed by walking length prefixes from the end of the header, so they must be contiguous at the tail of the account data.
+
+## No nested dynamic types
+
+Vec element types must be fixed-size. Nested dynamic types are not supported:
+
+```rust
+// This does NOT compile:
+pub items: Vec<String>,           // ERROR: nested dynamic type
+pub nested: Vec<Vec<Address>>,    // ERROR: nested dynamic type
+```
+
+The error message is: `Vec element type must be a fixed-size type; nested dynamic types (String/Vec) are not supported`.
+
+## Reading dynamic fields
+
+The macro generates typed accessor methods for each dynamic field. For `MultisigConfig`:
+
+```rust
+impl MultisigConfig<'_> {
+    // Returns &str -- borrows from the account data buffer
+    pub fn label(&self) -> &str { ... }
+
+    // Returns &[Address] -- borrows from the account data buffer
+    pub fn signers(&self) -> &[Address] { ... }
+}
+```
+
+These accessors are **O(1)** -- they use cached byte offsets computed once during account parsing. The first dynamic field's offset is a compile-time constant (discriminator + header size). Subsequent field offsets are cached in a `[u32; N-1]` array that is populated when the account is first parsed.
+
+Usage in an instruction handler:
+
+```rust
+pub fn verify_and_transfer(
+    &self,
+    amount: u64,
+    bumps: &ExecuteTransferBumps,
+    remaining: RemainingAccounts,
+) -> Result<(), ProgramError> {
+    let stored_signers = self.config.signers();
+    let threshold = self.config.threshold;
+
+    let mut approvals = 0u32;
+    for account in remaining.iter() {
+        let account = account?;
+        if !account.is_signer() {
+            continue;
+        }
+        let addr = account.address();
+        for stored in stored_signers {
+            if addr == stored {
+                approvals = approvals.wrapping_add(1);
+                break;
+            }
+        }
+    }
+
+    if approvals < threshold as u32 {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    // ... transfer logic
+}
+```
+
+Raw accessors (`label_raw()`, `signers_raw()`) are also generated. These return `RawEncoded`, a wrapper around the prefix + data bytes, useful for zero-copy CPI pass-through where the raw wire format can be memcpy'd without decode/re-encode.
+
+## Writing dynamic fields
+
+Each dynamic field gets a setter method: `set_label()`, `set_signers()`, etc.
+
+### Writing during initialization
+
+The `set_inner` method writes all fields (fixed and dynamic) at once. For dynamic accounts, it takes a payer and optional rent reference for reallocation:
+
+```rust
+self.config.set_inner(
+    *self.creator.address(),    // creator: Address
+    threshold,                   // threshold: u8
+    bumps.config,               // bump: u8
+    "",                          // label: &str (empty initially)
+    signers,                     // signers: &[Address]
+    self.creator.to_account_view(),  // payer
+    Some(&**self.rent),         // rent
+)
+```
+
+### Writing individual fields after initialization
+
+Individual setters handle reallocation automatically:
+
+```rust
+pub fn update_label(&mut self, label: &str) -> Result<(), ProgramError> {
+    self.config.set_label(self.creator, label)
+}
+```
+
+When the new value is larger than the old value, the setter:
+
+1. Reallocates the account to fit the new data (using the payer for additional lamports).
+2. Shifts trailing data (subsequent dynamic fields) forward via `memmove`.
+3. Writes the new length prefix and data.
+4. Updates cached offsets for subsequent fields.
+
+When the new value is smaller, the process reverses: data shifts backward, then the account shrinks.
+
+The maximum length is validated before any mutation:
+
+```rust
+if value.len() > MAX {
+    return Err(QuasarError::DynamicFieldTooLong.into());
+}
+```
+
+## Mutable access to Vec elements
+
+Vec fields additionally generate a `_mut()` accessor that returns a mutable slice:
+
+```rust
+// Read-only access
+let signers: &[Address] = self.config.signers();
+
+// Mutable access (in-place modification, no realloc)
+let signers_mut: &mut [Address] = self.config.signers_mut();
+signers_mut[0] = new_address;
+```
+
+The mutable accessor does not change the length -- it gives you mutable access to the existing elements. To change the number of elements, use `set_signers()`.
+
+## AccountCheck for dynamic accounts
+
+Dynamic account validation is more thorough than fixed accounts. The generated `AccountCheck::check()` walks every dynamic field's length prefix and validates:
+
+1. The prefix bytes are within bounds.
+2. The decoded length/count does not exceed the field's maximum.
+3. The data region (prefix + data) is within bounds.
+4. For string fields: the data is valid UTF-8 (on non-SBF targets; skipped on-chain for CU efficiency).
+
+This validation runs once during `from_account_view()`. After passing, all subsequent field accesses are safe -- they use the validated offsets without re-checking bounds.
+
+## Tail fields
+
+For advanced use cases, Quasar supports **tail fields** -- `&str` or `&[u8]` references that consume all remaining account data after the fixed header and any prefixed dynamic fields. Tail fields have no length prefix; their length is implicitly `data_len - offset`.
+
+```rust
+#[account(discriminator = 1)]
+pub struct Note<'a> {
+    pub author: Address,
+    pub content: &'a str,    // tail -- consumes remaining bytes
+}
+```
+
+Restrictions:
+- At most one tail field per struct.
+- The tail field must be the **last** field.
+- Tail fields cannot coexist in the middle of other dynamic fields.
+
+Tail fields are useful for variable-length data where you do not need a length prefix (e.g., a memo or note field that fills the rest of the account).
