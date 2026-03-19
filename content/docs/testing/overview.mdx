@@ -1,0 +1,196 @@
+---
+title: QuasarSVM
+description: A local Solana VM for testing programs without a validator.
+---
+
+QuasarSVM executes Solana programs locally. No validator, no RPC, no network. Load your compiled `.so`, send instructions, inspect results — all in-process.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────┐
+│              Your Test Code                 │
+│         (Rust, TypeScript, Kit)             │
+├──────────┬──────────────┬───────────────────┤
+│  Rust    │  web3.js     │  Kit              │
+│  crate   │  bindings    │  bindings         │
+├──────────┴──────┬───────┴───────────────────┤
+│                 │  FFI (C-ABI)              │
+│                 │  Native .dylib/.so/.dll   │
+├─────────────────┴───────────────────────────┤
+│              QuasarSVM Core                 │
+│         (Rust, Agave SVM engine)            │
+└─────────────────────────────────────────────┘
+```
+
+Three layers:
+
+1. **Core** — Rust crate wrapping the Agave SVM execution engine. Manages accounts, sysvars, program loading, and transaction processing.
+2. **FFI** — C-ABI boundary with binary serialization. The compiled native library (`.dylib` on macOS, `.so` on Linux, `.dll` on Windows) is distributed as platform-specific npm packages.
+3. **Bindings** — Rust tests use the core crate directly. TypeScript tests use Node.js bindings (via [koffi](https://koffi.dev)) in two flavors: `@solana/web3.js` and `@solana/kit`.
+
+## Built-in programs
+
+QuasarSVM ships with SPL programs embedded as compiled binaries:
+
+| Program | Address | Loaded by default |
+|---------|---------|-------------------|
+| System Program | `1111...1111` | Always |
+| BPF Loader v2 | `BPFLoader2111...` | Always |
+| BPF Loader v3 | `BPFLoaderUpgradeable...` | Always |
+| SPL Token | `TokenkegQfeZyiNwAJ...` | Yes |
+| SPL Token-2022 | `TokenzQdBNbLqP5VEhd...` | Yes |
+| SPL Associated Token | `ATokenGPvbdGVxr1b2hv...` | Yes |
+
+Disable any SPL program via config if your tests don't need them:
+
+```rust
+// Rust
+QuasarSvm::new_with_config(QuasarSvmConfig {
+    token: false,
+    token_2022: false,
+    associated_token: false,
+})
+```
+
+```typescript
+// TypeScript
+new QuasarSvm({ token: false, token2022: false, associatedToken: false })
+```
+
+## Execution model
+
+`processInstruction` takes an instruction and a list of accounts, executes it against the SVM, and returns an `ExecutionResult`:
+
+```rust
+let result = svm.process_transaction(&[instruction], &accounts);
+```
+
+The result contains:
+
+| Field | Description |
+|-------|-------------|
+| `status` | `Success` or `Err(ProgramError)` |
+| `compute_units_consumed` | CU used by the instruction |
+| `execution_time_us` | Wall-clock execution time in microseconds |
+| `return_data` | Data returned by the program via `set_return_data` |
+| `accounts` | Post-execution account state |
+| `logs` | Program log lines |
+| `pre_balances` / `post_balances` | SOL balances before and after |
+| `pre_token_balances` / `post_token_balances` | SPL token balances before and after |
+| `inner_instructions` | CPI calls made during execution |
+| `execution_trace` | Full call hierarchy with CPI depth |
+
+### Chained execution
+
+`process_instruction_chain` (Rust) or `processInstructionChain` (TypeScript) executes multiple instructions atomically — all succeed or all fail, matching on-chain transaction behavior.
+
+### Simulation
+
+`simulate_instruction` runs the instruction without committing state changes. Useful for estimating CU or validating logic without side effects.
+
+## Sysvar control
+
+Override sysvars to test time-dependent or epoch-dependent logic:
+
+```rust
+// Rust
+svm.warp_to_slot(100);
+svm.sysvars.clock.unix_timestamp = 1_700_000_000;
+```
+
+```typescript
+// TypeScript
+vm.warpToSlot(100n);
+vm.setClock({ slot: 100n, unixTimestamp: 1700000000n, epoch: 0n, epochStartTimestamp: 0n, leaderScheduleEpoch: 0n });
+vm.setComputeBudget(400_000n);
+```
+
+Available sysvar controls: `Clock`, `Rent`, `EpochSchedule`, compute budget, and slot hashes.
+
+## Account factories
+
+Both Rust and TypeScript bindings provide helpers for creating common account types without manual serialization:
+
+```rust
+// Rust
+use quasar_svm::token::*;
+
+let mint = create_keyed_mint_account(&mint_key, &Mint {
+    mint_authority: COption::Some(authority),
+    supply: 1_000_000,
+    decimals: 6,
+    is_initialized: true,
+    freeze_authority: COption::None,
+});
+
+let token = create_keyed_token_account(&token_key, &TokenAccount {
+    mint: mint_key,
+    owner: wallet,
+    amount: 500_000,
+    ..Default::default()
+});
+
+let ata = create_keyed_associated_token_account(&wallet, &mint_key, 500_000);
+```
+
+```typescript
+// TypeScript (web3.js)
+import { createKeyedMintAccount, createKeyedTokenAccount, createKeyedAssociatedTokenAccount } from "@blueshift-gg/quasar-svm/web3.js";
+
+const mint = createKeyedMintAccount(mintAddress, { decimals: 6, supply: 1_000_000n });
+const token = createKeyedTokenAccount(tokenAddress, { mint: mintAddress, owner: wallet, amount: 500_000n });
+const ata = createKeyedAssociatedTokenAccount(wallet, mintAddress, 500_000n);
+```
+
+## Error handling
+
+Execution errors map to a `ProgramError` enum matching Solana's on-chain error codes:
+
+```rust
+match result.status() {
+    ExecutionStatus::Success => {},
+    ExecutionStatus::Err(ProgramError::MissingRequiredSignature) => { /* expected */ },
+    ExecutionStatus::Err(e) => panic!("unexpected error: {e}"),
+}
+```
+
+```typescript
+if (!result.status.ok) {
+    assert.equal(result.status.error.type, "MissingRequiredSignature");
+}
+```
+
+Convenience methods: `assert_success()`, `assert_error(expected)`, `is_ok()`, `is_err()`, `print_logs()`.
+
+## Execution trace
+
+Every result includes a trace of all instructions executed, including CPI calls with nesting depth:
+
+```rust
+for instr in &result.execution_trace.instructions {
+    println!("depth={} program={} ok={}", instr.nesting_level, instr.program_id, instr.succeeded);
+}
+```
+
+Level 0 is the top-level instruction. Level 1+ are CPI calls. This is useful for debugging CPI chains and verifying that programs invoke each other correctly.
+
+## Platform support
+
+Native binaries are published as optional npm packages:
+
+| Platform | Package |
+|----------|---------|
+| macOS ARM | `@blueshift-gg/quasar-svm-darwin-arm64` |
+| macOS x64 | `@blueshift-gg/quasar-svm-darwin-x64` |
+| Linux x64 | `@blueshift-gg/quasar-svm-linux-x64-gnu` |
+| Linux ARM | `@blueshift-gg/quasar-svm-linux-arm64-gnu` |
+| Windows x64 | `@blueshift-gg/quasar-svm-win32-x64-msvc` |
+
+The correct binary is selected automatically at runtime. Override with the `QUASAR_SVM_LIB` environment variable.
+
+## Next steps
+
+- [QuasarSVM (Rust)](/docs/testing/quasarsvm-rust) — Rust test setup and patterns.
+- [QuasarSVM (TypeScript)](/docs/testing/quasarsvm-typescript) — Web3.js and Kit test setup.
+- [Mollusk](/docs/testing/mollusk) — Alternative harness for unit-testing individual instructions.
