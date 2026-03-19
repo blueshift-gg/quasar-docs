@@ -3,4 +3,152 @@ title: Installation
 description: Install Quasar and set up your development environment.
 ---
 
-Content coming soon.
+This guide walks you through installing Quasar and configuring your environment for Solana program development.
+
+## Prerequisites
+
+Before installing Quasar, you need two things: the Rust toolchain and the Solana CLI.
+
+### Rust
+
+Install Rust via [rustup](https://rustup.rs/):
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+After installation, verify it is working:
+
+```bash
+rustc --version
+cargo --version
+```
+
+Quasar targets the 2021 edition and works with the latest stable Rust release.
+
+### Solana CLI
+
+Install the Solana CLI tools (v2.x):
+
+```bash
+sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+```
+
+Verify installation:
+
+```bash
+solana --version
+```
+
+You will also want a local keypair for testing. If you do not have one yet:
+
+```bash
+solana-keygen new
+```
+
+For local development, set your cluster to localhost:
+
+```bash
+solana config set --url localhost
+```
+
+## Install the Quasar CLI
+
+The Quasar CLI is distributed as a Cargo binary. Install it with:
+
+```bash
+cargo install quasar-cli
+```
+
+This installs the `quasar` binary. Verify the installation:
+
+```bash
+quasar --version
+```
+
+You should see the version number printed to your terminal.
+
+## Toolchain selection
+
+Quasar supports two toolchains for compiling programs to SBF (Solana Bytecode Format). You choose a toolchain when you run `quasar init`, and the choice is saved in your project's `Quasar.toml`.
+
+### Solana toolchain (default)
+
+The **Solana** toolchain uses `cargo build-sbf`, which ships with the Solana CLI. This is the standard path most developers should use.
+
+- **Prerequisite:** Solana CLI v2.x installed (covered above).
+- **Build command:** `cargo build-sbf` (invoked automatically by `quasar build`).
+- **Best for:** Most projects. If you are unsure which to pick, use this one.
+
+### Upstream toolchain
+
+The **Upstream** toolchain uses `cargo +nightly build` targeting `bpfel-unknown-none` with the `sbpf-linker`. This produces smaller binaries and gives you access to nightly Rust features, but requires extra setup.
+
+- **Prerequisites:**
+  - A Rust nightly toolchain: `rustup toolchain install nightly`
+  - The `bpfel-unknown-none` target: `rustup target add bpfel-unknown-none --toolchain nightly`
+  - The `sbpf-linker` from [Anza's platform-tools](https://github.com/anza-xyz/platform-tools):
+    ```bash
+    git clone https://github.com/anza-xyz/platform-tools
+    cd platform-tools
+    cargo install-with-gallery
+    ```
+- **Build command:** `cargo +nightly build-bpf` (invoked automatically by `quasar build` when the upstream toolchain is configured).
+- **Best for:** Advanced users who want smaller binaries or need nightly features.
+
+When you select the upstream toolchain during `quasar init`, the CLI generates a `.cargo/config.toml` that sets the build target, linker flags, and feature flags automatically. If `sbpf-linker` is not found on your PATH, the CLI will print an error with installation instructions.
+
+### Changing your toolchain later
+
+The toolchain is stored in `Quasar.toml` under `[toolchain]`:
+
+```toml
+[toolchain]
+type = "solana"
+```
+
+You can change it by editing this file directly or by running `quasar config set defaults.toolchain upstream` to change the default for future projects.
+
+## Editor setup
+
+We recommend [VS Code](https://code.visualstudio.com/) with the [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer) extension. rust-analyzer provides inline type hints, go-to-definition for Quasar macros, and real-time error checking.
+
+A few tips for a smooth experience:
+
+- **Enable `check-cfg`:** Quasar programs use `cfg(target_os = "solana")`. The generated `Cargo.toml` includes a `check-cfg` entry so rust-analyzer will not warn about unrecognized cfg values.
+- **`no_std` awareness:** Quasar programs compile as `#![no_std]`. If rust-analyzer reports missing `std` items, this is expected -- use types from `quasar_lang::prelude` instead.
+- **Feature flags:** Enable the `client` feature in your editor settings if you want autocompletion for the generated client module (it is gated behind `#[cfg(not(target_os = "solana"))]`).
+
+## Global configuration
+
+The Quasar CLI saves your preferences to `~/.quasar/config.toml` after the first `quasar init`. This lets you skip interactive prompts on subsequent projects.
+
+You can view and modify global settings with `quasar config`:
+
+```bash
+# List all settings
+quasar config list
+
+# Set a default
+quasar config set defaults.toolchain solana
+quasar config set defaults.framework quasarsvm-rust
+quasar config set defaults.template minimal
+
+# Interactive menu
+quasar config
+```
+
+Available settings:
+
+| Key | Values | Description |
+|---|---|---|
+| `defaults.toolchain` | `solana`, `upstream` | Default toolchain for new projects |
+| `defaults.framework` | `none`, `mollusk`, `quasarsvm-rust`, `quasarsvm-web3js`, `quasarsvm-kit` | Default testing framework |
+| `defaults.template` | `minimal`, `full` | Default project template |
+| `ui.animation` | `true`, `false` | Show the animated banner during init |
+| `ui.color` | `true`, `false` | Enable colored terminal output |
+| `ui.timing` | `true`, `false` | Show build timing information |
+
+## Next steps
+
+Your environment is ready. Head to the [Quickstart](./quickstart) to scaffold and build your first program.
