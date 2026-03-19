@@ -3,4 +3,225 @@ title: TypeScript Client
 description: Using the auto-generated TypeScript client to interact with Quasar programs.
 ---
 
-Content coming soon.
+Quasar auto-generates TypeScript clients from your program's IDL, giving you type-safe instruction builders, account deserializers, and event parsers. Two variants are generated: one for `@solana/web3.js` and one for `@solana/kit`, so you can use whichever SDK your project prefers.
+
+## Generating the client
+
+Run the `quasar idl` command to generate the IDL and all client code:
+
+```bash
+quasar idl
+```
+
+This parses your program source and produces:
+
+- `target/idl/<name>.idl.json` -- The IDL file describing your program's instructions, accounts, types, and events.
+- `target/client/typescript/<name>/web3.ts` -- TypeScript client for `@solana/web3.js`.
+- `target/client/typescript/<name>/kit.ts` -- TypeScript client for `@solana/kit`.
+- `target/client/typescript/<name>/package.json` -- Package manifest with dependency declarations.
+
+The `quasar build` command also generates these files automatically, so you typically do not need to run `quasar idl` separately unless you want to regenerate clients without rebuilding the program.
+
+## Directory structure
+
+After generation, the TypeScript client lives at:
+
+```
+target/
+  client/
+    typescript/
+      <name>/
+        web3.ts         # @solana/web3.js client
+        kit.ts          # @solana/kit client
+        package.json    # package manifest
+```
+
+The `package.json` exports both variants:
+
+```json
+{
+  "name": "<name>-client",
+  "exports": {
+    "./web3.js": "./web3.ts",
+    "./kit": "./kit.ts"
+  },
+  "dependencies": {
+    "@solana/codecs": "^6.2.0",
+    "@solana/kit": "^6.0.0",
+    "@solana/web3.js": "github:blueshift-gg/web3.js#v2"
+  }
+}
+```
+
+The `@solana/codecs` dependency is included only when your program has instruction arguments or custom types that require encoding.
+
+## Web3.js client
+
+The `web3.ts` client generates instruction builder functions that return `TransactionInstruction` objects compatible with `@solana/web3.js`.
+
+### Sending a transaction
+
+Using the escrow program as an example:
+
+```typescript
+import { make, take, refund } from "../target/client/typescript/quasar-escrow/web3.js";
+import { Connection, Keypair, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
+
+const connection = new Connection("http://localhost:8899", "confirmed");
+const maker = Keypair.generate();
+
+// Build the make instruction
+const makeIx = make({
+  maker: maker.publicKey,
+  escrow: escrowPda,
+  mintA: mintA,
+  mintB: mintB,
+  makerTaA: makerTokenAccountA,
+  makerTaB: makerTokenAccountB,
+  vaultTaA: vaultTokenAccountA,
+  rent: SYSVAR_RENT_PUBKEY,
+  tokenProgram: TOKEN_PROGRAM_ID,
+  systemProgram: SystemProgram.programId,
+  deposit: 1000000n,
+  receive: 500000n,
+});
+
+// Send the transaction
+const tx = new Transaction().add(makeIx);
+await sendAndConfirmTransaction(connection, tx, [maker]);
+```
+
+Each generated function accepts a single object with named fields for every account and instruction argument. Account fields are `PublicKey` values; argument fields use their natural TypeScript types (`bigint` for `u64`/`i64`, `number` for `u8`/`u16`/`u32`, `boolean` for `bool`, etc.).
+
+### Reading and deserializing accounts
+
+The generated client includes account type decoders for all `#[account]` types in your program:
+
+```typescript
+import { decodeEscrow } from "../target/client/typescript/quasar-escrow/web3.js";
+
+const accountInfo = await connection.getAccountInfo(escrowPda);
+if (accountInfo) {
+  const escrow = decodeEscrow(accountInfo.data);
+  console.log("Maker:", escrow.maker.toBase58());
+  console.log("Receive amount:", escrow.receive.toString());
+  console.log("Bump:", escrow.bump);
+}
+```
+
+The decoder handles the discriminator prefix (skipping it) and deserializes fixed-size fields using little-endian byte reads. For accounts with dynamic fields, the decoder walks the Borsh-encoded variable-length data.
+
+### Subscribing to events
+
+Events emitted with `emit!()` are encoded as CPI log data. The generated client includes event discriminator constants and decoder functions:
+
+```typescript
+import { decodeMakeEvent, MAKE_EVENT_DISCRIMINATOR } from "../target/client/typescript/quasar-escrow/web3.js";
+
+// Parse transaction logs for events
+connection.onLogs(programId, (logs) => {
+  for (const log of logs.logs) {
+    // Events are base64-encoded in "Program data:" log lines
+    if (log.startsWith("Program data:")) {
+      const data = Buffer.from(log.slice("Program data: ".length), "base64");
+      if (data[0] === MAKE_EVENT_DISCRIMINATOR) {
+        const event = decodeMakeEvent(data);
+        console.log("Make event:", event);
+      }
+    }
+  }
+});
+```
+
+## Kit client
+
+The `kit.ts` client generates the same functionality but targets the `@solana/kit` SDK (the successor to `@solana/web3.js`). The API shape is similar but uses Kit's transaction and instruction types.
+
+### Sending a transaction with Kit
+
+```typescript
+import { make } from "../target/client/typescript/quasar-escrow/kit.js";
+import { createSolanaRpc, address, pipe, createTransactionMessage,
+         setTransactionMessageFeePayer, appendTransactionMessageInstruction,
+         signAndSendTransactionMessageWithSigners } from "@solana/kit";
+
+const rpc = createSolanaRpc("http://localhost:8899");
+
+const makeIx = make({
+  maker: address("..."),
+  escrow: address("..."),
+  mintA: address("..."),
+  mintB: address("..."),
+  makerTaA: address("..."),
+  makerTaB: address("..."),
+  vaultTaA: address("..."),
+  rent: address("SysvarRent111111111111111111111111111111111"),
+  tokenProgram: address("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+  systemProgram: address("11111111111111111111111111111111"),
+  deposit: 1000000n,
+  receive: 500000n,
+});
+
+const message = pipe(
+  createTransactionMessage({ version: 0 }),
+  (msg) => setTransactionMessageFeePayer(makerAddress, msg),
+  (msg) => appendTransactionMessageInstruction(makeIx, msg),
+);
+
+await signAndSendTransactionMessageWithSigners(message);
+```
+
+## PDA derivation
+
+The generated clients include PDA derivation helpers for accounts that use `seeds` in the Quasar program:
+
+```typescript
+import { findEscrowPda } from "../target/client/typescript/quasar-escrow/web3.js";
+
+const [escrowPda, bump] = findEscrowPda(makerPublicKey);
+```
+
+For the vault program with seeds `[b"vault", user]`:
+
+```typescript
+import { findVaultPda } from "../target/client/typescript/quasar-vault/web3.js";
+
+const [vaultPda, bump] = findVaultPda(userPublicKey);
+```
+
+PDA derivation functions are generated for each unique seed pattern in your program.
+
+## Type mapping
+
+The IDL generator maps Rust types to TypeScript as follows:
+
+| Rust type | TypeScript type | Encoding |
+|-----------|----------------|----------|
+| `u8`, `u16`, `u32` | `number` | Little-endian |
+| `u64`, `u128`, `i64`, `i128` | `bigint` | Little-endian |
+| `i8`, `i16`, `i32` | `number` | Little-endian |
+| `bool` | `boolean` | Single byte (0/1) |
+| `Address` | `PublicKey` (web3.js) / `Address` (kit) | 32 bytes |
+| `[u8; N]` | `Uint8Array` | Raw bytes |
+| `Vec<T>` | `T[]` | u32 LE length prefix + elements |
+
+## Working with the IDL directly
+
+The IDL JSON file (`target/idl/<name>.idl.json`) is a machine-readable description of your program. You can use it to generate clients for other languages or to build custom tooling:
+
+```bash
+cat target/idl/quasar-escrow.idl.json | jq '.instructions[].name'
+```
+
+The IDL includes:
+- **metadata** -- Program name, version, and address.
+- **instructions** -- Each instruction's discriminator, accounts (with signer/writable flags), and arguments.
+- **accounts** -- On-chain account types with field layouts and discriminators.
+- **types** -- Custom types used in instructions or accounts.
+- **events** -- Event definitions with their discriminators and fields.
+
+## Keeping clients in sync
+
+The generated clients are derived directly from your Rust source code. Any time you change an instruction signature, add an account field, or modify a type, run `quasar build` or `quasar idl` to regenerate. The TypeScript files in `target/client/typescript/` are overwritten on each generation, so do not edit them manually.
+
+For CI/CD pipelines, you can commit the generated clients to your repository or generate them as part of your build step. The generation is deterministic -- the same source code always produces the same client output.

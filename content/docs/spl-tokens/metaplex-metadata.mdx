@@ -3,4 +3,355 @@ title: Metaplex Metadata
 description: Interacting with the Metaplex Token Metadata program from Quasar.
 ---
 
-Content coming soon.
+The Metaplex Token Metadata program attaches rich metadata (name, symbol, URI, creators, collections) to SPL Token mints. Quasar's `quasar-spl` crate provides zero-copy account types, typed CPI methods, and declarative initialization attributes for working with metadata and master edition accounts. Enable it with the `metadata` feature on `quasar-spl`.
+
+## Account types
+
+### MetadataAccount
+
+`Account<MetadataAccount>` validates that an account is owned by the Metaplex Token Metadata program (`metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s`), has at least 65 bytes of data, and that the first byte (the Metaplex `Key` discriminant) is `MetadataV1` (4).
+
+It derefs to `MetadataPrefix`, a zero-copy `#[repr(C)]` struct covering the fixed 65-byte header:
+
+```rust
+// Fields accessible via zero-copy deref:
+metadata.key()               // u8 (always 4 for MetadataV1)
+metadata.update_authority()  // &Address
+metadata.mint()              // &Address
+```
+
+The fields after the prefix -- name, symbol, URI, creators, collection, uses -- are variable-length Borsh-serialized data. The fixed prefix gives you constant-time access to the most commonly needed fields (update authority and mint) without parsing the entire account.
+
+### MasterEditionAccount
+
+`Account<MasterEditionAccount>` validates ownership by the Metadata program, at least 18 bytes of data, and that the `Key` discriminant is `MasterEditionV2` (6).
+
+It derefs to `MasterEditionPrefix`:
+
+```rust
+// Fields accessible via zero-copy deref:
+edition.key()         // u8 (always 6 for MasterEditionV2)
+edition.supply()      // u64 -- number of editions printed
+edition.max_supply()  // Option<u64> -- None means unlimited
+```
+
+## The MetadataProgram type
+
+Use `Program<MetadataProgram>` to reference the Metaplex program in your accounts struct. It validates the address and provides all CPI methods through the `MetadataCpi` trait:
+
+```rust
+use quasar_spl::metadata::MetadataProgram;
+
+pub metadata_program: &'info Program<MetadataProgram>,
+```
+
+## Declarative metadata initialization
+
+The most ergonomic way to create metadata is with the declarative `metadata::*` attributes on a mint's `#[account(init)]`:
+
+```rust
+use quasar_spl::{metadata::MetadataProgram, Mint, Token};
+
+#[derive(Accounts)]
+pub struct CreateNft<'info> {
+    pub payer: &'info mut Signer,
+    pub mint_authority: &'info Signer,
+    #[account(
+        init,
+        mint::decimals = 0,
+        mint::authority = mint_authority,
+        metadata::name = b"My NFT",
+        metadata::symbol = b"MNFT",
+        metadata::uri = b"https://example.com/nft.json",
+        metadata::seller_fee_basis_points = 500,
+        metadata::is_mutable = true,
+    )]
+    pub mint: &'info mut Account<Mint>,
+    pub metadata: &'info mut UncheckedAccount,
+    pub metadata_program: &'info Program<MetadataProgram>,
+    pub token_program: &'info Program<Token>,
+    pub system_program: &'info Program<System>,
+    pub rent: &'info UncheckedAccount,
+}
+```
+
+The generated code performs these steps during account parsing:
+
+1. Creates the mint via `System::create_account` + `InitializeMint2`.
+2. Calls `create_metadata_accounts_v3` on the Metaplex program via CPI, passing the name, symbol, URI, seller fee, and mutability flag.
+
+The Metaplex program derives the metadata PDA internally (seeds: `["metadata", metadata_program_id, mint_address]`), so the `metadata` account in your struct is an `UncheckedAccount` -- the Metaplex program validates and initializes it.
+
+### Attribute reference
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `metadata::name` | `&[u8]` or `b"..."` | Token name (max 32 bytes) |
+| `metadata::symbol` | `&[u8]` or `b"..."` | Token symbol (max 10 bytes) |
+| `metadata::uri` | `&[u8]` or `b"..."` | URI to off-chain metadata JSON (max 200 bytes) |
+| `metadata::seller_fee_basis_points` | `u16` | Royalty in basis points (100 = 1%) |
+| `metadata::is_mutable` | `bool` | Whether metadata can be updated later |
+
+The Metaplex program enforces maximum lengths: 32 bytes for name, 10 bytes for symbol, 200 bytes for URI. Quasar validates these limits at CPI build time and panics if exceeded.
+
+## CPI methods
+
+The `MetadataCpi` trait provides all Metaplex Token Metadata CPI methods. They are grouped into variable-length instructions (which use `BufCpiCall`) and fixed-length instructions (which use `CpiCall`).
+
+### Variable-length instructions
+
+These instructions contain Borsh-serialized string fields and use `BufCpiCall<'a, N, 512>`, a stack-allocated CPI call with a 512-byte instruction data buffer.
+
+#### create_metadata_accounts_v3
+
+Creates a metadata account for an existing mint:
+
+```rust
+self.metadata_program
+    .create_metadata_accounts_v3(
+        &self.metadata,
+        &self.mint,
+        &self.mint_authority,
+        &self.payer,
+        &self.update_authority,
+        &self.system_program,
+        &self.rent,
+        b"Token Name",    // name
+        b"TKN",           // symbol
+        b"https://...",   // uri
+        500,              // seller_fee_basis_points
+        true,             // is_mutable
+        true,             // update_authority_is_signer
+    )
+    .invoke()?;
+```
+
+The string parameters accept any type implementing `CpiEncode<4>`, which covers `&[u8]`, byte string literals (`b"..."`), and `BorshString`. The `CpiEncode` trait writes each string as a Borsh-encoded `String` (4-byte little-endian length prefix followed by UTF-8 bytes) directly into the 512-byte stack buffer.
+
+#### update_metadata_accounts_v2
+
+Updates an existing metadata account. All fields are optional -- pass `None` to leave unchanged:
+
+```rust
+use quasar_lang::borsh::BorshString;
+
+self.metadata_program
+    .update_metadata_accounts_v2(
+        &self.metadata,
+        &self.update_authority,
+        None,                               // new_update_authority
+        Some(BorshString(b"New Name")),      // name
+        None,                               // symbol
+        Some(BorshString(b"https://new")),   // uri
+        None,                               // seller_fee_basis_points
+        None,                               // primary_sale_happened
+        Some(false),                         // is_mutable
+    )
+    .invoke()?;
+```
+
+### Fixed-length instructions
+
+These use regular `CpiCall` with const-generic sizes.
+
+#### create_master_edition_v3
+
+Creates a master edition account, making the mint a verified NFT:
+
+```rust
+self.metadata_program
+    .create_master_edition_v3(
+        &self.edition,
+        &self.mint,
+        &self.update_authority,
+        &self.mint_authority,
+        &self.payer,
+        &self.metadata,
+        &self.token_program,
+        &self.system_program,
+        &self.rent,
+        Some(0), // max_supply: 0 = unique 1/1, None = unlimited
+    )
+    .invoke()?;
+```
+
+#### mint_new_edition_from_master_edition_via_token
+
+Mints a new edition from an existing master edition:
+
+```rust
+self.metadata_program
+    .mint_new_edition_from_master_edition_via_token(
+        &self.new_metadata,
+        &self.new_edition,
+        &self.master_edition,
+        &self.new_mint,
+        &self.edition_mark_pda,
+        &self.new_mint_authority,
+        &self.payer,
+        &self.token_account_owner,
+        &self.token_account,
+        &self.new_metadata_update_authority,
+        &self.metadata,
+        &self.token_program,
+        &self.system_program,
+        &self.rent,
+        edition_number, // u64
+    )
+    .invoke()?;
+```
+
+### Collection management
+
+```rust
+// Verify a collection item
+self.metadata_program.verify_collection(
+    &self.metadata, &self.collection_authority, &self.payer,
+    &self.collection_mint, &self.collection_metadata,
+    &self.collection_master_edition,
+).invoke()?;
+
+// Set and verify in one call
+self.metadata_program.set_and_verify_collection(
+    &self.metadata, &self.collection_authority, &self.payer,
+    &self.update_authority, &self.collection_mint,
+    &self.collection_metadata, &self.collection_master_edition,
+).invoke()?;
+
+// Unverify
+self.metadata_program.unverify_collection(
+    &self.metadata, &self.collection_authority,
+    &self.collection_mint, &self.collection_metadata,
+    &self.collection_master_edition,
+).invoke()?;
+
+// Set collection size
+self.metadata_program.set_collection_size(
+    &self.metadata, &self.update_authority, &self.mint, size,
+).invoke()?;
+```
+
+Sized variants are also available: `verify_sized_collection_item`, `set_and_verify_sized_collection_item`, and `unverify_sized_collection_item`.
+
+### Creator and authority management
+
+```rust
+// Sign metadata as a creator
+self.metadata_program.sign_metadata(&self.creator, &self.metadata).invoke()?;
+
+// Remove creator verification
+self.metadata_program.remove_creator_verification(&self.creator, &self.metadata).invoke()?;
+
+// Approve a collection authority
+self.metadata_program.approve_collection_authority(
+    &self.record, &self.new_authority, &self.update_authority,
+    &self.payer, &self.metadata, &self.mint,
+).invoke()?;
+
+// Revoke a collection authority
+self.metadata_program.revoke_collection_authority(
+    &self.record, &self.delegate, &self.revoke_authority,
+    &self.metadata, &self.mint,
+).invoke()?;
+```
+
+### Token operations
+
+```rust
+// Freeze a delegated token account
+self.metadata_program.freeze_delegated_account(
+    &self.delegate, &self.token_account, &self.edition,
+    &self.mint, &self.token_program,
+).invoke()?;
+
+// Thaw a delegated token account
+self.metadata_program.thaw_delegated_account(
+    &self.delegate, &self.token_account, &self.edition,
+    &self.mint, &self.token_program,
+).invoke()?;
+
+// Burn an NFT
+self.metadata_program.burn_nft(
+    &self.metadata, &self.owner, &self.mint,
+    &self.token, &self.edition, &self.spl_token,
+).invoke()?;
+
+// Update primary sale flag
+self.metadata_program.update_primary_sale_happened_via_token(
+    &self.metadata, &self.owner, &self.token,
+).invoke()?;
+
+// Set token standard
+self.metadata_program.set_token_standard(
+    &self.metadata, &self.update_authority, &self.mint,
+).invoke()?;
+```
+
+## BufCpiCall vs CpiCall
+
+Most Metaplex CPI methods use the standard `CpiCall<'a, N, D>` where `D` is the exact instruction data size known at compile time. However, `create_metadata_accounts_v3` and `update_metadata_accounts_v2` contain variable-length string fields (name, symbol, URI), so they use `BufCpiCall<'a, N, 512>`.
+
+`BufCpiCall` allocates a 512-byte buffer on the stack and tracks the actual written length. The Metaplex program's maximum combined string payload (32 + 10 + 200 = 242 bytes plus Borsh overhead) fits comfortably within 512 bytes. The `.invoke()` and `.invoke_signed()` methods work identically -- only the internal data encoding differs.
+
+## InitMetadata and InitMasterEdition traits
+
+For manual initialization outside the declarative attribute system, Quasar provides two extension traits.
+
+### InitMetadata
+
+```rust
+use quasar_spl::metadata::InitMetadata;
+
+self.metadata.init(
+    &self.metadata_program,
+    &self.mint,
+    &self.mint_authority,
+    &self.payer,
+    &self.update_authority,
+    &self.system_program,
+    &self.rent,
+    b"Token Name",
+    b"TKN",
+    b"https://example.com/meta.json",
+    0,     // seller_fee_basis_points
+    true,  // is_mutable
+)?;
+
+// Or with PDA signing:
+self.metadata.init_signed(
+    &self.metadata_program,
+    &self.mint,
+    &self.mint_authority,
+    &self.payer,
+    &self.update_authority,
+    &self.system_program,
+    &self.rent,
+    b"Token Name",
+    b"TKN",
+    b"https://example.com/meta.json",
+    0,
+    true,
+    &seeds,
+)?;
+```
+
+### InitMasterEdition
+
+```rust
+use quasar_spl::metadata::InitMasterEdition;
+
+self.master_edition.init(
+    &self.metadata_program,
+    &self.mint,
+    &self.update_authority,
+    &self.mint_authority,
+    &self.payer,
+    &self.metadata,
+    &self.token_program,
+    &self.system_program,
+    &self.rent,
+    Some(0), // max_supply: 0 = unique 1/1 NFT
+)?;
+```
+
+Both traits also provide `init_signed()` variants that accept PDA seeds for cases where the mint authority or update authority is a PDA.

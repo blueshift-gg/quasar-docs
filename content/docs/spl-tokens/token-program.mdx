@@ -1,6 +1,290 @@
 ---
 title: Token Program
-description: Working with SPL Token accounts using zero-copy access.
+description: Working with SPL Token accounts using zero-copy access and typed CPI.
 ---
 
-Content coming soon.
+Quasar's `quasar-spl` crate provides zero-copy account wrappers and fully typed CPI methods for the SPL Token program. Token accounts and mints are parsed directly from the SVM input buffer with no deserialization overhead, and every CPI call is stack-allocated with const-generic sizes.
+
+## Account types
+
+The SPL integration provides two core marker types: `Token` for token accounts (165 bytes) and `Mint` for mint accounts (82 bytes). These are used with the `Account<T>` wrapper to get automatic owner validation and zero-copy field access.
+
+| Type | Owner check | Deref target | Use when |
+|------|-------------|--------------|----------|
+| `Account<Token>` | SPL Token only | `TokenAccountState` | Program only supports SPL Token |
+| `Account<Mint>` | SPL Token only | `MintAccountState` | Mint owned by SPL Token |
+| `InterfaceAccount<Token>` | SPL Token **or** Token-2022 | `TokenAccountState` | Program supports both |
+| `InterfaceAccount<Mint>` | SPL Token **or** Token-2022 | `MintAccountState` | Mint from either program |
+
+### TokenAccountState
+
+The `TokenAccountState` struct is a `#[repr(C)]` layout that maps directly to the 165-byte SPL Token account data:
+
+```rust
+// Fields accessible via zero-copy deref:
+token_account.mint()              // &Address
+token_account.owner()             // &Address
+token_account.amount()            // u64
+token_account.delegate()          // Option<&Address>
+token_account.is_initialized()    // bool
+token_account.is_frozen()         // bool
+token_account.is_native()         // bool
+token_account.delegated_amount()  // u64
+token_account.close_authority()   // Option<&Address>
+```
+
+### MintAccountState
+
+The `MintAccountState` struct maps the 82-byte SPL Token mint layout:
+
+```rust
+// Fields accessible via zero-copy deref:
+mint.mint_authority()     // Option<&Address>
+mint.supply()             // u64
+mint.decimals()           // u8
+mint.is_initialized()     // bool
+mint.freeze_authority()   // Option<&Address>
+```
+
+Both structs have alignment 1 and are cast directly from the account data pointer -- no copying, no allocation.
+
+## Program type and CPI
+
+Use `Program<Token>` to reference the SPL Token program in your accounts struct. It validates the address is the SPL Token program ID and provides all CPI methods through the `TokenCpi` trait:
+
+```rust
+use quasar_lang::prelude::*;
+use quasar_spl::{Mint, Token, TokenCpi};
+
+#[derive(Accounts)]
+pub struct TransferTokens<'info> {
+    pub authority: &'info Signer,
+    pub from: &'info mut Account<Token>,
+    pub to: &'info mut Account<Token>,
+    pub token_program: &'info Program<Token>,
+}
+
+impl<'info> TransferTokens<'info> {
+    pub fn handler(&self, amount: u64) -> Result<(), ProgramError> {
+        self.token_program
+            .transfer(self.from, self.to, self.authority, amount)
+            .invoke()
+    }
+}
+```
+
+Every CPI method returns a `CpiCall` with const-generic account and data sizes. The call is not executed until you call `.invoke()` or `.invoke_signed()`, giving you control over PDA signing.
+
+## CPI methods
+
+The `TokenCpi` trait provides the following methods on `Program<Token>`, `Program<Token2022>`, and `Interface<TokenInterface>`:
+
+### transfer
+
+Transfers tokens between two accounts. Takes the source, destination, authority, and amount:
+
+```rust
+self.token_program
+    .transfer(&self.from, &self.to, &self.authority, amount)
+    .invoke()?;
+```
+
+### transfer_checked
+
+Transfers tokens with mint decimal verification. Requires the mint account and explicit decimals parameter:
+
+```rust
+self.token_program
+    .transfer_checked(
+        &self.from,
+        &self.mint,
+        &self.to,
+        &self.authority,
+        amount,
+        decimals,
+    )
+    .invoke()?;
+```
+
+### mint_to
+
+Mints new tokens to a destination account:
+
+```rust
+self.token_program
+    .mint_to(&self.mint, &self.destination, &self.mint_authority, amount)
+    .invoke()?;
+```
+
+### burn
+
+Burns tokens from an account, reducing the mint's supply:
+
+```rust
+self.token_program
+    .burn(&self.source, &self.mint, &self.authority, amount)
+    .invoke()?;
+```
+
+### approve
+
+Approves a delegate to transfer tokens up to a specified amount:
+
+```rust
+self.token_program
+    .approve(&self.source, &self.delegate, &self.authority, amount)
+    .invoke()?;
+```
+
+### revoke
+
+Revokes a previously approved delegate:
+
+```rust
+self.token_program
+    .revoke(&self.source, &self.authority)
+    .invoke()?;
+```
+
+### close_account
+
+Closes a token account and reclaims its lamports to a destination:
+
+```rust
+self.token_program
+    .close_account(&self.account, &self.destination, &self.authority)
+    .invoke()?;
+```
+
+### sync_native
+
+Syncs the lamport balance of a native SOL token account:
+
+```rust
+self.token_program
+    .sync_native(&self.native_token_account)
+    .invoke()?;
+```
+
+## Initializing token accounts
+
+Use the `#[account(init)]` attribute with `token::mint` and `token::authority` to declaratively create and initialize token accounts:
+
+```rust
+#[derive(Accounts)]
+pub struct InitTokenAccount<'info> {
+    pub payer: &'info mut Signer,
+    #[account(init, token::mint = mint, token::authority = payer)]
+    pub token_account: &'info mut Account<Token>,
+    pub mint: &'info Account<Mint>,
+    pub token_program: &'info Program<Token>,
+    pub system_program: &'info Program<System>,
+}
+```
+
+The generated code chains `System::create_account` (allocating 165 bytes) followed by `InitializeAccount3` in two CPIs. The `InitializeAccount3` variant does not require the Rent sysvar account, saving one account slot.
+
+For conditional initialization, use `init_if_needed`. If the account already exists (owner is not the System program), Quasar validates that the mint and authority match the expected values:
+
+```rust
+#[account(init_if_needed, payer = maker, token::mint = mint_a, token::authority = escrow)]
+pub vault: &'info mut Account<Token>,
+```
+
+This pattern is used extensively in the escrow example, where vault token accounts are created on the first `make` instruction.
+
+## Initializing mints
+
+Use `mint::decimals` and `mint::authority` to create and initialize mints. An optional `mint::freeze_authority` can also be specified:
+
+```rust
+#[derive(Accounts)]
+pub struct InitMint<'info> {
+    pub payer: &'info mut Signer,
+    #[account(init, mint::decimals = 6, mint::authority = mint_authority)]
+    pub mint: &'info mut Account<Mint>,
+    pub mint_authority: &'info Signer,
+    pub token_program: &'info Program<Token>,
+    pub system_program: &'info Program<System>,
+}
+```
+
+The generated code chains `System::create_account` (allocating 82 bytes) followed by `InitializeMint2`. Like `InitializeAccount3`, this variant skips the Rent sysvar.
+
+## Closing token accounts
+
+Token accounts are owned by the SPL Token program, not your program. This means you cannot use the standard `Account<T>::close()` method (which does a direct lamport drain). Instead, use the `TokenClose` trait, which performs a CPI to the token program's `CloseAccount` instruction:
+
+```rust
+use quasar_spl::{Token, TokenClose, TokenCpi};
+
+// Close a vault token account, sending lamports to the taker
+// The escrow PDA is the authority, so we use invoke_signed
+self.vault_ta_a
+    .close(self.token_program, self.taker, self.escrow)
+    .invoke_signed(&seeds)?;
+```
+
+The `TokenClose` trait is implemented for `Account<Token>`, `Account<Mint>`, `Account<AssociatedToken>`, and their `InterfaceAccount` counterparts. The `.close()` method returns a `CpiCall`, so you choose between `.invoke()` (when the authority is a signer) and `.invoke_signed()` (when the authority is a PDA).
+
+## PDA-signed transfers
+
+When a PDA owns tokens, use `.invoke_signed()` to provide the PDA seeds. The escrow program demonstrates this pattern for withdrawing tokens from a vault:
+
+```rust
+impl<'info> Refund<'info> {
+    pub fn withdraw_tokens_and_close(&mut self, bumps: &RefundBumps) -> Result<(), ProgramError> {
+        let seeds = bumps.escrow_seeds();
+
+        // Transfer all tokens from vault back to maker
+        self.token_program
+            .transfer(
+                self.vault_ta_a,
+                self.maker_ta_a,
+                self.escrow,
+                self.vault_ta_a.amount(),
+            )
+            .invoke_signed(&seeds)?;
+
+        // Close the vault token account
+        self.vault_ta_a
+            .close(self.token_program, self.maker, self.escrow)
+            .invoke_signed(&seeds)
+    }
+}
+```
+
+The `bumps.escrow_seeds()` method is auto-generated by the `#[derive(Accounts)]` macro for any PDA account with a `seeds` attribute.
+
+## Manual initialization
+
+For cases where declarative `#[account(init)]` attributes are not flexible enough, you can use the `InitToken` and `InitMint` traits directly:
+
+```rust
+use quasar_spl::InitToken;
+
+self.token_account.init(
+    self.system_program,
+    self.payer,
+    self.token_program,
+    self.mint,
+    &owner_address,
+    Some(&*self.rent), // or None to fetch via syscall
+)?;
+```
+
+```rust
+use quasar_spl::InitMint;
+
+self.mint.init(
+    self.system_program,
+    self.payer,
+    self.token_program,
+    6,                          // decimals
+    &mint_authority_address,
+    Some(&freeze_authority),    // or None
+    Some(&*self.rent),
+)?;
+```
+
+Both traits also provide `init_if_needed()` variants that check whether the account is already initialized before creating it.

@@ -3,4 +3,237 @@ title: Associated Token Accounts
 description: Creating and validating ATAs with zero-copy helpers.
 ---
 
-Content coming soon.
+Associated Token Accounts (ATAs) are deterministic token accounts derived from a wallet address and a mint address. They provide a canonical way to find a user's token account for any given mint without requiring the user to manage arbitrary token account addresses. Quasar provides the `AssociatedToken` marker type, address derivation helpers, and declarative initialization attributes.
+
+## The AssociatedToken type
+
+Use `Account<AssociatedToken>` to reference an ATA in your accounts struct. Like `Account<Token>`, it validates that the account is owned by the SPL Token program and that the data is at least 165 bytes. The `AssociatedToken` type is distinct from `Token` to signal intent in your code, but it derefs to the same `TokenAccountState` layout:
+
+```rust
+use quasar_spl::{AssociatedToken, Mint, Token};
+
+#[derive(Accounts)]
+pub struct ReadAta<'info> {
+    #[account(associated_token::mint = mint, associated_token::authority = wallet)]
+    pub ata: &'info Account<AssociatedToken>,
+    pub mint: &'info Account<Mint>,
+    pub wallet: &'info Signer,
+    pub token_program: &'info Program<Token>,
+}
+```
+
+The `associated_token::mint` and `associated_token::authority` attributes trigger ATA address derivation and validation during account parsing. The generated code:
+
+1. Derives the expected ATA address from the wallet, mint, and token program.
+2. Checks that the provided account address matches the derived address.
+3. Validates that the token account data has the correct mint and owner fields.
+
+## Address derivation
+
+The `quasar-spl` crate exports several address derivation functions. On-chain, these use an optimized path through `sol_sha256` and `sol_curve_validate_point` at roughly 544 CU, compared to the standard `find_program_address` syscall at roughly 1,500 CU.
+
+### Runtime derivation
+
+For use in instruction handlers:
+
+```rust
+use quasar_spl::get_associated_token_address;
+
+// Derives ATA for SPL Token (default token program)
+let (ata_address, bump) = get_associated_token_address(&wallet, &mint);
+```
+
+For a specific token program (e.g. Token-2022):
+
+```rust
+use quasar_spl::get_associated_token_address_with_program;
+
+let (ata_address, bump) = get_associated_token_address_with_program(
+    &wallet,
+    &mint,
+    &token_program_id,
+);
+```
+
+### Const derivation
+
+For use in `const` contexts or off-chain:
+
+```rust
+use quasar_spl::get_associated_token_address_const;
+
+const ATA: (Address, u8) = get_associated_token_address_const(&WALLET, &MINT);
+```
+
+The const variants use `const_crypto` for SHA-256 and Ed25519 off-curve evaluation, making them suitable for compile-time PDA computation.
+
+## ATA derivation seeds
+
+The ATA address is a PDA derived from the Associated Token Account program using these seeds:
+
+```text
+seeds = [wallet, token_program, mint]
+program = ATA_PROGRAM_ID
+```
+
+This is the standard derivation defined by the SPL Associated Token Account program. The `associated_token::mint` and `associated_token::authority` attributes cause the derive macro to compute this automatically.
+
+## Initializing ATAs
+
+### init
+
+To create an ATA that must not already exist, use the `init` attribute:
+
+```rust
+use quasar_spl::{AssociatedToken, AssociatedTokenProgram, Mint, Token};
+
+#[derive(Accounts)]
+pub struct InitAta<'info> {
+    pub payer: &'info mut Signer,
+    #[account(init, associated_token::mint = mint, associated_token::authority = wallet)]
+    pub ata: &'info mut Account<AssociatedToken>,
+    pub wallet: &'info Signer,
+    pub mint: &'info Account<Mint>,
+    pub token_program: &'info Program<Token>,
+    pub system_program: &'info Program<System>,
+    pub ata_program: &'info Program<AssociatedTokenProgram>,
+}
+```
+
+When `init` is used with `associated_token::*` attributes, the generated code invokes the ATA program's `Create` instruction via CPI. This is a single CPI call -- the ATA program handles both account creation and token account initialization internally.
+
+Required accounts for ATA initialization:
+- **payer** -- Signs and pays for account creation. Must be `mut Signer`.
+- **ata** -- The ATA to create. Must be `mut`.
+- **wallet** -- The wallet that will own the ATA.
+- **mint** -- The token mint.
+- **token_program** -- SPL Token or Token-2022 program.
+- **system_program** -- System program.
+- **ata_program** -- The Associated Token Account program (`Program<AssociatedTokenProgram>`).
+
+### init_if_needed
+
+To create an ATA only if it does not already exist, use `init_if_needed`:
+
+```rust
+#[derive(Accounts)]
+pub struct InitIfNeededAta<'info> {
+    pub payer: &'info mut Signer,
+    #[account(init_if_needed, associated_token::mint = mint, associated_token::authority = wallet)]
+    pub ata: &'info mut Account<AssociatedToken>,
+    pub wallet: &'info Signer,
+    pub mint: &'info Account<Mint>,
+    pub token_program: &'info Program<Token>,
+    pub system_program: &'info Program<System>,
+    pub ata_program: &'info Program<AssociatedTokenProgram>,
+}
+```
+
+The generated code checks the account's owner:
+
+- If the owner is the System program (uninitialized), it calls the ATA program's `CreateIdempotent` instruction, which is a no-op if the account happens to already exist.
+- If the owner is a token program (already initialized), it validates that the mint and authority match the expected values, returning `InvalidAccountData` on mismatch.
+
+This pattern is common in escrow and DEX programs where you cannot guarantee the user has already created their ATA:
+
+```rust
+// From the escrow example -- create the taker's ATA if it doesn't exist
+#[account(init_if_needed, payer = taker, token::mint = mint_a, token::authority = taker)]
+pub taker_ta_a: &'info mut Account<Token>,
+```
+
+Note that the escrow example uses `token::mint` / `token::authority` instead of `associated_token::*`. The `token::*` attributes create a **generic** token account (using `InitToken`), while `associated_token::*` attributes create an ATA at the deterministic address (using `InitAssociatedToken`). Choose based on whether you need the canonical ATA address or an arbitrary token account.
+
+## ATA validation without init
+
+To validate that an existing account is the correct ATA without creating it, use `associated_token::*` attributes without `init`:
+
+```rust
+#[derive(Accounts)]
+pub struct ValidateAta<'info> {
+    #[account(associated_token::mint = mint, associated_token::authority = wallet)]
+    pub ata: &'info Account<AssociatedToken>,
+    pub mint: &'info Account<Mint>,
+    pub wallet: &'info Signer,
+    pub token_program: &'info Program<Token>,
+}
+```
+
+This runs the full validation pipeline:
+1. Derives the expected ATA address from wallet + mint + token program.
+2. Checks that the account address matches.
+3. Validates the token account data (mint field, owner field, initialization state).
+
+If any check fails, the instruction returns an error before your handler runs.
+
+## Manual ATA operations
+
+For advanced use cases where declarative attributes are not sufficient, you can use the `InitAssociatedToken` trait and `validate_ata` function directly.
+
+### Manual initialization
+
+```rust
+use quasar_spl::InitAssociatedToken;
+
+// Create the ATA (fails if it already exists)
+self.ata.init(
+    self.payer,
+    self.wallet,
+    self.mint,
+    self.system_program,
+    self.token_program,
+    self.ata_program,
+)?;
+```
+
+### Manual idempotent initialization
+
+```rust
+// Create if needed, validate if exists
+self.ata.init_if_needed(
+    self.payer,
+    self.wallet,
+    self.mint,
+    self.system_program,
+    self.token_program,
+    self.ata_program,
+)?;
+```
+
+### Manual validation
+
+```rust
+use quasar_spl::validate_ata;
+
+validate_ata(
+    self.ata.to_account_view(),
+    wallet_address,
+    mint_address,
+    token_program_address,
+)?;
+```
+
+The `validate_ata` function performs the same three-step check (address derivation, address match, data validation) used by the declarative attributes.
+
+## The AssociatedTokenProgram type
+
+The `AssociatedTokenProgram` type validates that an account is the ATA program by checking both its address (`ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL`) and that it is executable. Use it with `Program<AssociatedTokenProgram>`:
+
+```rust
+pub ata_program: &'info Program<AssociatedTokenProgram>,
+```
+
+This type is required for ATA `init` and `init_if_needed` operations, but not for read-only validation (where only the address derivation is checked).
+
+## Closing ATAs
+
+ATAs are regular token accounts under the hood, so closing them works the same way as closing any token account -- use the `TokenClose` trait:
+
+```rust
+use quasar_spl::TokenClose;
+
+self.ata.close(self.token_program, self.destination, self.authority)
+    .invoke()?;
+```
+
+`TokenClose` is implemented for `Account<AssociatedToken>` and `InterfaceAccount<AssociatedToken>`. The lamports from the closed account are sent to the destination.
