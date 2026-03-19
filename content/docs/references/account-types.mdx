@@ -1,6 +1,404 @@
 ---
 title: Account Types
-description: Reference for all built-in account types in Quasar.
+description: Exhaustive reference for all built-in account types in Quasar.
 ---
 
-Content coming soon.
+Quasar provides a set of account wrapper types that validate on-chain accounts during instruction parsing. Every field in a `#[derive(Accounts)]` struct must use one of these types. All types are `#[repr(transparent)]` over `AccountView`, enabling zero-cost pointer-cast construction.
+
+## Summary Table
+
+| Type | Validates | Typical Use |
+|------|-----------|-------------|
+| `Account<T>` | Owner + discriminator | Program-owned data accounts |
+| `Signer` | `is_signer` flag | Fee payers, authorities |
+| `UncheckedAccount` | Nothing | CPI passthrough, manual checks |
+| `SystemAccount` | Owner is system program | SOL-holding wallets |
+| `Program<T>` | Executable + address | Program accounts for CPI |
+| `Interface<T>` | Executable + multi-address | Token program (SPL / Token-2022) |
+| `InterfaceAccount<T>` | Multi-owner + discriminator | Token/Mint accounts across programs |
+| `Sysvar<T>` | Address matches sysvar ID | Clock, Rent |
+| `Option<&'info T>` | Presence check via sentinel | Optional accounts |
+
+## `Account<T>`
+
+A typed, validated wrapper for program-owned data accounts. `T` is your `#[account]` struct.
+
+**Validates:**
+- Account owner matches `T::OWNER` (your program ID) -- returns `IllegalOwner`
+- Discriminator bytes match `T::DISCRIMINATOR` -- returns `InvalidAccountData`
+- Account data is large enough for the type -- returns `AccountDataTooSmall`
+
+**Implements:** `Deref<Target = T>` and `DerefMut`, so you can access the inner type's fields directly.
+
+**Type signature:**
+
+```rust
+#[repr(transparent)]
+pub struct Account<T> {
+    pub(crate) inner: T,
+}
+```
+
+**Example:**
+
+```rust
+#[account(discriminator = 1)]
+pub struct Vault {
+    pub authority: Address,
+    pub balance: u64,
+}
+
+#[derive(Accounts)]
+pub struct Deposit<'info> {
+    #[account(mut, has_one = authority)]
+    pub vault: &'info mut Account<Vault>,
+    pub authority: &'info Signer,
+}
+```
+
+**Methods:**
+
+| Method | Description |
+|--------|-------------|
+| `realloc(new_space, payer, rent)` | Resize account data, adjusting lamports for rent exemption |
+| `close(destination)` | Zero discriminator, drain lamports, reassign to system program |
+| `owner()` | Returns the expected owner `Address` (requires `T: Owner`) |
+
+### Static vs Dynamic Accounts
+
+For **fixed-size** accounts (all fields are fixed-width), `Account<T>` is constructed via pointer cast from `&AccountView` -- zero deserialization cost.
+
+For **dynamic** accounts (containing `String` or `Vec` fields), construction walks the inline length prefixes once to cache byte offsets, then provides O(1) field access:
+
+```rust
+#[account(discriminator = 5)]
+pub struct Profile<'a> {
+    pub owner: Address,
+    pub name: String,           // dynamic field
+    pub bio: String<u16, 4096>, // custom prefix + max
+}
+
+#[derive(Accounts)]
+pub struct UpdateProfile<'info> {
+    #[account(mut)]
+    pub profile: &'info mut Account<Profile<'info>>,
+}
+```
+
+Dynamic accounts have additional methods:
+
+| Method | Description |
+|--------|-------------|
+| `field_name()` | Read accessor returning `&str` or `&[T]` |
+| `field_name_raw()` | Raw bytes including length prefix (for CPI passthrough) |
+| `set_field_name(payer, value)` | Write accessor with auto-realloc |
+
+---
+
+## `Signer`
+
+An account that must be a transaction signer. Does not check owner, data, or any other property.
+
+**Validates:**
+- `is_signer` flag is set -- returns `MissingRequiredSignature`
+
+**Type signature:**
+
+```rust
+#[repr(transparent)]
+pub struct Signer {
+    view: AccountView,
+}
+```
+
+**Example:**
+
+```rust
+#[derive(Accounts)]
+pub struct Initialize<'info> {
+    #[account(mut, signer)]
+    pub payer: &'info Signer,
+    pub system_program: &'info Program<System>,
+}
+```
+
+---
+
+## `UncheckedAccount`
+
+An account with no validation at all. Useful for accounts passed through to CPI calls or whose constraints are checked manually by the instruction handler.
+
+**Validates:** Nothing.
+
+**Type signature:**
+
+```rust
+#[repr(transparent)]
+pub struct UncheckedAccount {
+    view: AccountView,
+}
+```
+
+**Example:**
+
+```rust
+#[derive(Accounts)]
+pub struct ForwardCpi<'info> {
+    /// CHECK: Validated by the target program via CPI.
+    pub target_account: &'info UncheckedAccount,
+    pub target_program: &'info UncheckedAccount,
+}
+```
+
+---
+
+## `SystemAccount`
+
+An account owned by the System program (address `111...1`). Typically used for SOL-holding accounts that have no program data.
+
+**Validates:**
+- Account owner is the all-zeros address (System program) -- returns `IllegalOwner`
+
+**Type signature:**
+
+```rust
+#[repr(transparent)]
+pub struct SystemAccount {
+    view: AccountView,
+}
+```
+
+**Example:**
+
+```rust
+#[derive(Accounts)]
+pub struct TransferSol<'info> {
+    #[account(mut)]
+    pub from: &'info Signer,
+    #[account(mut)]
+    pub to: &'info SystemAccount,
+    pub system_program: &'info Program<System>,
+}
+```
+
+---
+
+## `Program<T>`
+
+A wrapper for program accounts that validates the executable flag and address. `T` must implement the `Id` trait, providing a `const ID: Address`.
+
+**Validates:**
+- Account is executable -- returns `InvalidAccountData`
+- Account address matches `T::ID` -- returns `IncorrectProgramId`
+
+**Type signature:**
+
+```rust
+#[repr(transparent)]
+pub struct Program<T: Id> {
+    view: AccountView,
+    _marker: PhantomData<T>,
+}
+```
+
+**Example:**
+
+```rust
+#[derive(Accounts)]
+pub struct CreateAccount<'info> {
+    #[account(mut, signer)]
+    pub payer: &'info Signer,
+    pub system_program: &'info Program<System>,
+}
+```
+
+**Methods:**
+
+| Method | Description |
+|--------|-------------|
+| `emit_event(event, event_authority, bump)` | Emit an event via self-CPI to this program |
+
+Common program marker types: `System`, `Token`, `Token2022`, `AssociatedTokenProgram`, `MetadataProgram`.
+
+---
+
+## `Interface<T>`
+
+A wrapper for program accounts that accept multiple program IDs. `T` must implement the `ProgramInterface` trait.
+
+**Validates:**
+- Account is executable -- returns `InvalidAccountData`
+- `T::matches(address)` returns true -- returns `IncorrectProgramId`
+
+**Type signature:**
+
+```rust
+#[repr(transparent)]
+pub struct Interface<T: ProgramInterface> {
+    view: AccountView,
+    _marker: PhantomData<T>,
+}
+```
+
+**Example:**
+
+```rust
+use quasar_spl::interface::TokenInterface;
+
+#[derive(Accounts)]
+pub struct Transfer<'info> {
+    #[account(mut)]
+    pub from: &'info InterfaceAccount<Token>,
+    #[account(mut)]
+    pub to: &'info InterfaceAccount<Token>,
+    pub token_program: &'info Interface<TokenInterface>,
+}
+```
+
+The built-in `TokenInterface` accepts both SPL Token and Token-2022 program IDs.
+
+---
+
+## `InterfaceAccount<T>`
+
+A typed account wrapper that accepts accounts owned by either SPL Token or Token-2022. Provides zero-copy `Deref`/`DerefMut` to the inner data layout.
+
+**Validates:**
+- Account owner is SPL Token or Token-2022 -- returns `IllegalOwner`
+- `T::check()` passes (discriminator/data validation) -- returns `InvalidAccountData`
+
+**Implements:** `Deref<Target = T::Target>` and `DerefMut` when `T: ZeroCopyDeref`.
+
+**Type signature:**
+
+```rust
+#[repr(transparent)]
+pub struct InterfaceAccount<T> {
+    view: AccountView,
+    _marker: PhantomData<T>,
+}
+```
+
+**Example:**
+
+```rust
+use quasar_spl::{token::Token, mint::Mint};
+
+#[derive(Accounts)]
+pub struct Deposit<'info> {
+    #[account(mut, token::mint = mint, token::authority = authority)]
+    pub vault: &'info mut InterfaceAccount<Token>,
+    pub mint: &'info InterfaceAccount<Mint>,
+    pub authority: &'info Signer,
+    pub token_program: &'info Interface<TokenInterface>,
+}
+```
+
+**Methods:**
+
+| Method | Description |
+|--------|-------------|
+| `resolve()` | Dispatch to program-specific resolved type based on runtime owner (when `T: InterfaceResolve`) |
+
+---
+
+## `Sysvar<T>`
+
+A read-only wrapper for sysvar accounts. Validates the account address matches `T::ID` and provides zero-copy access to the sysvar data via `Deref`.
+
+**Validates:**
+- Account address matches the sysvar ID -- returns `IncorrectProgramId`
+
+**Implements:** `Deref<Target = T>`, so sysvar fields are accessed directly.
+
+**Supported sysvars:**
+
+| Sysvar | Type | Fields |
+|--------|------|--------|
+| Clock | `Sysvar<Clock>` | `slot`, `epoch`, `unix_timestamp`, `epoch_start_timestamp`, `leader_schedule_epoch` |
+| Rent | `Sysvar<Rent>` | `minimum_balance_unchecked(data_len)`, `try_minimum_balance(data_len)` |
+
+**Type signature:**
+
+```rust
+#[repr(transparent)]
+pub struct Sysvar<T: sysvars::Sysvar> {
+    view: AccountView,
+    _marker: PhantomData<T>,
+}
+```
+
+**Example:**
+
+```rust
+#[derive(Accounts)]
+pub struct ReadClock<'info> {
+    pub clock: &'info Sysvar<Clock>,
+}
+
+impl ReadClock<'_> {
+    pub fn handler(&self) -> Result<(), ProgramError> {
+        let slot = self.clock.slot.get();
+        let timestamp = self.clock.unix_timestamp.get();
+        Ok(())
+    }
+}
+```
+
+You can also fetch sysvars via syscall without an account:
+
+```rust
+let clock = Clock::get()?;
+let rent = Rent::get()?;
+```
+
+---
+
+## `Option<&'info T>`
+
+An optional account. When the client passes the program ID as the account address, the field resolves to `None`. Otherwise it resolves to `Some(&T)` with all normal validation for type `T`.
+
+**Validates:**
+- If address equals the program ID: field is `None` (no further checks)
+- Otherwise: full validation for the inner type `T`
+
+**Example:**
+
+```rust
+#[derive(Accounts)]
+pub struct OptionalDeposit<'info> {
+    #[account(mut)]
+    pub vault: &'info mut Account<Vault>,
+    pub optional_authority: Option<&'info Signer>,
+}
+
+impl OptionalDeposit<'_> {
+    pub fn handler(&self) -> Result<(), ProgramError> {
+        if let Some(authority) = self.optional_authority {
+            // authority is present and validated as Signer
+        }
+        Ok(())
+    }
+}
+```
+
+## Trait Requirements
+
+All account types implement `AsAccountView`, which provides access to the underlying `AccountView`:
+
+```rust
+pub trait AsAccountView {
+    fn to_account_view(&self) -> &AccountView;
+    fn address(&self) -> &Address;
+}
+```
+
+For program-owned data accounts, the `#[account]` macro automatically implements these traits on your type:
+
+| Trait | Purpose |
+|-------|---------|
+| `Owner` | `const OWNER: Address` -- your program ID |
+| `Discriminator` | `const DISCRIMINATOR: &[u8]` -- byte prefix |
+| `Space` | `const SPACE: usize` -- total account size |
+| `AccountCheck` | Runtime validation (discriminator check) |
+| `StaticView` | Marks type safe for pointer-cast construction |

@@ -3,4 +3,363 @@ title: CLI Reference
 description: Complete reference for the Quasar command-line interface.
 ---
 
-Content coming soon.
+The `quasar` CLI is a project-aware build tool for Solana programs. It wraps the Solana/Upstream toolchain for compilation, runs tests, generates IDLs, profiles compute-unit usage, and dumps sBPF assembly.
+
+## Install
+
+```bash
+cargo install --path cli
+```
+
+---
+
+## Commands
+
+### `quasar init`
+
+Scaffold a new Quasar project.
+
+```
+quasar init [NAME] [OPTIONS]
+```
+
+When a name is provided, uses saved defaults and skips prompts. Without a name, launches an interactive wizard that prompts for project name, toolchain, testing framework, and template.
+
+| Flag | Description |
+|------|-------------|
+| `NAME` | Project name (becomes crate name and `Quasar.toml` project name). Use `.` to scaffold into the current directory. |
+| `-y, --yes` | Skip prompts and use saved defaults |
+| `--no-git` | Skip `git init` |
+| `--framework <FRAMEWORK>` | Testing framework: `none`, `mollusk`, `quasarsvm-rust`, `quasarsvm-web3js`, `quasarsvm-kit` |
+| `--template <TEMPLATE>` | Project template: `minimal` (single instruction) or `full` (state, events, instruction files) |
+| `--toolchain <TOOLCHAIN>` | Build toolchain: `solana` or `upstream` |
+
+The wizard generates a complete project directory with:
+- `Cargo.toml` and `Quasar.toml`
+- Source files (`src/lib.rs`, `src/instructions/`, etc.)
+- Test scaffolding (based on framework choice)
+- Program keypair
+- `.gitignore` and `git init` (unless `--no-git`)
+
+Preferences are saved to `~/.quasar/config.toml` for future runs.
+
+**Examples:**
+
+```bash
+quasar init                        # Interactive wizard
+quasar init my-program             # Use saved defaults, no prompts
+quasar init . --toolchain upstream # Scaffold into current directory
+quasar init my-app --framework mollusk --template full
+```
+
+---
+
+### `quasar new instruction`
+
+Generate a new instruction handler with boilerplate and auto-incremented discriminator.
+
+```
+quasar new instruction <NAME>
+```
+
+| Argument | Description |
+|----------|-------------|
+| `NAME` | Instruction name in `snake_case` (e.g., `transfer`, `create_pool`) |
+
+This command:
+1. Creates `src/instructions/<name>.rs` with an `Accounts` struct and handler method
+2. Adds `mod <name>;` and `pub use <name>::*;` to `src/instructions/mod.rs`
+3. Inserts a new `#[instruction(discriminator = N)]` entry in `src/lib.rs` with `N` set to one more than the highest existing discriminator
+
+**Example:**
+
+```bash
+quasar new instruction withdraw
+```
+
+Creates `src/instructions/withdraw.rs`:
+
+```rust
+use quasar_lang::prelude::*;
+
+#[derive(Accounts)]
+pub struct Withdraw<'info> {
+    pub payer: &'info mut Signer,
+    pub system_program: &'info Program<System>,
+}
+
+impl<'info> Withdraw<'info> {
+    #[inline(always)]
+    pub fn withdraw(&self) -> Result<(), ProgramError> {
+        Ok(())
+    }
+}
+```
+
+And adds to `src/lib.rs`:
+
+```rust
+#[instruction(discriminator = 2)]  // auto-incremented
+pub fn withdraw(ctx: Ctx<Withdraw>) -> Result<(), ProgramError> {
+    ctx.accounts.withdraw()
+}
+```
+
+---
+
+### `quasar build`
+
+Compile the on-chain program. Reads `Quasar.toml` to determine the toolchain (`solana` or `upstream`) and generates the IDL before building.
+
+```
+quasar build [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--debug` | Emit debug symbols (required for profiling and source-interleaved dump) |
+| `-w, --watch` | Watch `src/` for changes and rebuild automatically |
+| `--features <FEATURES>` | Cargo features to enable (passed through to the build command) |
+
+On success, prints the binary size and delta from the previous build:
+
+```
+  Build complete in 1.2s (56.6 KB, -1.2 KB)
+```
+
+**Examples:**
+
+```bash
+quasar build                  # Release build
+quasar build --debug          # Debug build with symbols
+quasar build --watch          # Auto-rebuild on changes
+quasar build --features "devnet"
+```
+
+---
+
+### `quasar test`
+
+Run the test suite. Builds first (unless `--no-build`), then runs either Rust tests or TypeScript tests based on the `Quasar.toml` testing framework.
+
+```
+quasar test [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--debug` | Build with debug symbols before testing |
+| `-f, --filter <PATTERN>` | Only run tests whose name matches the pattern |
+| `-w, --watch` | Watch `src/` for changes and re-run tests automatically |
+| `--no-build` | Skip the build step (use existing binary) |
+
+Test framework behavior:
+- **Rust** (`mollusk`, `quasarsvm-rust`): Runs `cargo test` and parses output
+- **TypeScript** (`quasarsvm-web3js`, `quasarsvm-kit`): Runs Mocha and parses JSON reporter output
+
+**Examples:**
+
+```bash
+quasar test                       # Build and test
+quasar test --filter deposit      # Only run tests matching "deposit"
+quasar test --watch               # Auto-test on changes
+quasar test --no-build            # Skip build, test existing binary
+quasar test --debug --filter pda  # Debug build, filtered tests
+```
+
+---
+
+### `quasar profile`
+
+Measure compute-unit usage by statically walking the sBPF binary's call graph. If no ELF path is given, runs a debug build automatically.
+
+```
+quasar profile [ELF] [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `ELF` | Path to a compiled `.so` (auto-detected from `target/deploy/` if omitted) |
+| `--expand` | Show full terminal output with all functions and bar charts |
+| `--diff <PROGRAM>` | Compare CU cost against an on-chain program by name |
+| `--share` | Upload the profile as a public GitHub Gist |
+| `-w, --watch` | Watch `src/` for changes and re-profile automatically |
+
+The profiler tracks results between runs. On the first run, it shows the top 5 hottest functions. On subsequent runs, it shows regressions and improvements:
+
+```
+  my_program  12,345 CU (+42)
+     8,000 (+200)   5.0%  Initialize::verify
+     4,000 (-158)   3.0%  Deposit::process
+
+  flamegraph  http://127.0.0.1:7777/?program=my_program
+```
+
+A background HTTP server starts automatically to serve the interactive flamegraph viewer, shutting down after 30 seconds of inactivity.
+
+**Examples:**
+
+```bash
+quasar profile                    # Auto-build and profile
+quasar profile --expand           # Show all functions
+quasar profile --diff my-program  # Compare with on-chain program
+quasar profile --share            # Upload as Gist
+quasar profile --watch            # Auto-profile on changes
+quasar profile target/deploy/my_program.so  # Profile specific ELF
+```
+
+---
+
+### `quasar dump`
+
+Dump sBPF assembly using `llvm-objdump` from Solana platform-tools. If no ELF path is given, auto-detects from `target/deploy/` or `target/profile/`.
+
+```
+quasar dump [ELF] [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `ELF` | Path to a compiled `.so` (auto-detected if omitted) |
+| `-f, --function <SYMBOL>` | Disassemble only the named symbol (demangled name) |
+| `-S, --source` | Interleave source code (requires a debug build) |
+
+Prints an instruction count summary at the end.
+
+**Examples:**
+
+```bash
+quasar dump                              # Full disassembly
+quasar dump --function initialize        # Single function
+quasar dump --function initialize -S     # With source interleaving
+quasar dump target/deploy/my_program.so  # Specific ELF
+```
+
+---
+
+### `quasar deploy`
+
+Deploy the program to a Solana cluster using the Solana CLI. Uses the cluster and wallet from your Solana CLI config (`solana config get`).
+
+```
+quasar deploy [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--program-keypair <KEYPAIR>` | Path to the program keypair (default: `target/deploy/<name>-keypair.json`) |
+| `--upgrade-authority <KEYPAIR>` | Upgrade authority keypair (default: Solana CLI default keypair) |
+
+The program binary is auto-detected from `target/deploy/`.
+
+**Examples:**
+
+```bash
+quasar build && quasar deploy                     # Build and deploy
+quasar deploy                                     # Deploy existing binary
+quasar deploy --program-keypair ./my-key.json     # Custom program keypair
+quasar deploy --upgrade-authority ./authority.json # Custom upgrade authority
+```
+
+---
+
+### `quasar clean`
+
+Remove build artifacts from `target/deploy/`, `target/profile/`, `target/idl/`, and `target/client/`.
+
+```
+quasar clean
+```
+
+---
+
+### `quasar idl`
+
+Generate the IDL for a program crate. Produces JSON, TypeScript client, and Rust client module.
+
+```
+quasar idl <PATH>
+```
+
+| Argument | Description |
+|----------|-------------|
+| `PATH` | Path to the program crate directory |
+
+**Example:**
+
+```bash
+quasar idl .                   # Current directory
+quasar idl programs/my-program # Specific program crate
+```
+
+---
+
+### `quasar config`
+
+Manage global settings stored in `~/.quasar/config.toml`. Running without a subcommand launches an interactive menu.
+
+```
+quasar config [SUBCOMMAND]
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `get <KEY>` | Read a single config value |
+| `set <KEY> <VALUE>` | Write a config value |
+| `list` | Print every config value |
+| `reset` | Restore factory defaults |
+
+**Available keys:**
+
+| Key | Valid Values | Default |
+|-----|-------------|---------|
+| `defaults.toolchain` | `solana`, `upstream` | (not set) |
+| `defaults.framework` | `none`, `mollusk`, `quasarsvm-rust`, `quasarsvm-web3js`, `quasarsvm-kit` | (not set) |
+| `defaults.template` | `minimal`, `full` | (not set) |
+| `ui.animation` | `true`, `false` | `true` |
+| `ui.color` | `true`, `false` | `true` |
+| `ui.timing` | `true`, `false` | `true` |
+
+**Examples:**
+
+```bash
+quasar config                        # Interactive menu
+quasar config list                   # Print all settings
+quasar config get ui.animation       # Read a value
+quasar config set ui.color false     # Write a value
+quasar config set defaults.toolchain solana
+quasar config reset                  # Restore factory defaults
+```
+
+---
+
+### `quasar completions`
+
+Generate shell completions for your shell.
+
+```
+quasar completions <SHELL>
+```
+
+| Argument | Description |
+|----------|-------------|
+| `SHELL` | `bash`, `zsh`, `fish`, `elvish`, `powershell` |
+
+**Examples:**
+
+```bash
+quasar completions bash >> ~/.bashrc
+quasar completions zsh >> ~/.zshrc
+quasar completions fish > ~/.config/fish/completions/quasar.fish
+```
+
+---
+
+## Global Options
+
+| Flag | Description |
+|------|-------------|
+| `-h, --help` | Print help |
+| `-V, --version` | Print version |
+
+Run `quasar <command> --help` for detailed help on any command.

@@ -1,6 +1,563 @@
 ---
 title: Account Constraints
-description: Reference for all account constraint attributes in Quasar.
+description: Complete reference for all #[account(...)] constraint attributes in Quasar.
 ---
 
-Content coming soon.
+Account constraints are specified as attributes on fields within a `#[derive(Accounts)]` struct using the `#[account(...)]` syntax. They generate compile-time validation code that runs during account parsing.
+
+```rust
+#[derive(Accounts)]
+pub struct MyInstruction<'info> {
+    #[account(mut, signer, has_one = authority)]
+    pub vault: &'info mut Account<Vault>,
+    pub authority: &'info Signer,
+}
+```
+
+## Custom Errors
+
+The `has_one`, `constraint`, and `address` attributes support custom error codes using the `@` syntax:
+
+```rust
+#[account(
+    has_one = authority @ MyError::Unauthorized,
+    constraint = vault.balance.get() > 0 @ MyError::EmptyVault,
+    address = EXPECTED_ADDRESS @ MyError::WrongAddress
+)]
+```
+
+Without `@`, these attributes use their default errors (`HasOneMismatch`, `ConstraintViolation`, `AddressMismatch` respectively).
+
+---
+
+## General Constraints
+
+### `mut`
+
+Marks the account as mutable. Generates a runtime check that the account was passed as writable in the transaction.
+
+| | |
+|---|---|
+| **Syntax** | `#[account(mut)]` |
+| **Error on failure** | `ProgramError::Immutable` |
+| **Required for** | Any account whose data or lamports are modified |
+
+```rust
+#[account(mut)]
+pub vault: &'info mut Account<Vault>,
+```
+
+### `signer`
+
+Requires the account to be a transaction signer. Automatically implied for `Signer` type fields; use this on other types when signer status is needed.
+
+| | |
+|---|---|
+| **Syntax** | `#[account(signer)]` |
+| **Error on failure** | `ProgramError::MissingRequiredSignature` |
+
+```rust
+#[account(mut, signer)]
+pub authority: &'info mut Account<Vault>,
+```
+
+### `dup`
+
+Allows this account to share the same address as a previous account in the struct. By default, Quasar rejects duplicate accounts to prevent aliasing bugs. Use `dup` when intentional duplication is needed.
+
+| | |
+|---|---|
+| **Syntax** | `#[account(dup)]` |
+| **Effect** | Skips the duplicate-address check for this field |
+
+```rust
+#[derive(Accounts)]
+pub struct SelfTransfer<'info> {
+    #[account(mut)]
+    pub source: &'info mut Account<TokenAccount>,
+    #[account(mut, dup)]
+    pub destination: &'info mut Account<TokenAccount>,
+}
+```
+
+### `address = <expr>`
+
+Validates that the account's address matches a constant or expression. Supports custom errors with `@`.
+
+| | |
+|---|---|
+| **Syntax** | `#[account(address = EXPR)]` or `#[account(address = EXPR @ ErrorVariant)]` |
+| **Error on failure** | `QuasarError::AddressMismatch` (default) or custom |
+
+```rust
+use solana_address::address;
+const ADMIN: Address = address!("Admin111111111111111111111111111111111111111");
+
+#[account(address = ADMIN)]
+pub admin: &'info Signer,
+```
+
+### `has_one = <field>`
+
+Validates that a field stored in the account data matches the address of another account in the struct. The account type must have a field with the same name as the referenced account.
+
+| | |
+|---|---|
+| **Syntax** | `#[account(has_one = field_name)]` or `#[account(has_one = field_name @ ErrorVariant)]` |
+| **Error on failure** | `QuasarError::HasOneMismatch` (default) or custom |
+| **Generated check** | `account.field_name == field_name.address()` |
+
+```rust
+#[account(discriminator = 1)]
+pub struct Vault {
+    pub authority: Address,
+    pub mint: Address,
+}
+
+#[derive(Accounts)]
+pub struct Withdraw<'info> {
+    #[account(mut, has_one = authority, has_one = mint)]
+    pub vault: &'info mut Account<Vault>,
+    pub authority: &'info Signer,
+    pub mint: &'info Account<Mint>,
+}
+```
+
+Multiple `has_one` checks can be specified on the same field:
+
+```rust
+#[account(has_one = authority, has_one = mint @ MyError::WrongMint)]
+```
+
+### `constraint = <expr>`
+
+Evaluates an arbitrary boolean expression. If the expression returns `false`, the instruction fails. Supports custom errors with `@`.
+
+| | |
+|---|---|
+| **Syntax** | `#[account(constraint = EXPR)]` or `#[account(constraint = EXPR @ ErrorVariant)]` |
+| **Error on failure** | `QuasarError::ConstraintViolation` (default) or custom |
+
+```rust
+#[account(
+    constraint = vault.balance.get() >= amount @ MyError::InsufficientBalance
+)]
+pub vault: &'info Account<Vault>,
+```
+
+Multiple constraints can be specified:
+
+```rust
+#[account(
+    constraint = clock.slot.get() > vault.unlock_slot.get(),
+    constraint = vault.is_active.get()
+)]
+```
+
+---
+
+## Initialization
+
+### `init`
+
+Creates a new account via CPI to the System program. Automatically:
+1. Derives the account size from `T::SPACE` (or `space = <expr>`)
+2. Calculates rent-exempt lamports
+3. Calls `create_account` CPI
+4. Writes the discriminator bytes
+
+| | |
+|---|---|
+| **Syntax** | `#[account(init, payer = field_name)]` |
+| **Requires** | `payer` field, `system_program` field in the accounts struct |
+| **Error on failure** | `AccountAlreadyInitialized` if discriminator is already set |
+
+```rust
+#[derive(Accounts)]
+pub struct CreateVault<'info> {
+    #[account(init, payer = payer)]
+    pub vault: &'info mut Account<Vault>,
+    #[account(mut, signer)]
+    pub payer: &'info Signer,
+    pub system_program: &'info Program<System>,
+}
+```
+
+For PDA accounts, combine `init` with `seeds` and `bump`:
+
+```rust
+#[account(init, payer = payer, seeds = [b"vault", authority.address().as_ref()], bump)]
+pub vault: &'info mut Account<Vault>,
+```
+
+### `init_if_needed`
+
+Like `init`, but skips creation if the account already exists (discriminator is set). If the account is uninitialized (all zeros), it creates and initializes it.
+
+| | |
+|---|---|
+| **Syntax** | `#[account(init_if_needed, payer = field_name)]` |
+| **Requires** | `payer` field, `system_program` field |
+
+```rust
+#[account(init_if_needed, payer = payer, seeds = [b"profile", user.address().as_ref()], bump)]
+pub profile: &'info mut Account<Profile>,
+```
+
+### `payer = <field>`
+
+Specifies which signer account pays for account creation. Must reference another field in the accounts struct.
+
+| | |
+|---|---|
+| **Syntax** | `#[account(init, payer = field_name)]` |
+| **Auto-detection** | If omitted on `init`, looks for a field named `payer` |
+
+### `space = <expr>`
+
+Overrides the default account size (`T::SPACE`). Use for dynamic accounts or when you need extra space.
+
+| | |
+|---|---|
+| **Syntax** | `#[account(init, payer = payer, space = EXPR)]` |
+| **Default** | `T::SPACE` (discriminator + sizeof fixed fields) |
+
+```rust
+#[account(init, payer = payer, space = 8 + 32 + 4 + name.len())]
+pub profile: &'info mut Account<Profile>,
+```
+
+---
+
+## PDA (Program Derived Address)
+
+### `seeds = [...]`
+
+Specifies the seeds used to derive a PDA. When combined with `bump`, the framework verifies that the account address matches the derived PDA.
+
+| | |
+|---|---|
+| **Syntax** | `#[account(seeds = [seed1, seed2, ...], bump)]` |
+| **Error on failure** | `QuasarError::InvalidPda` |
+
+Seed expressions can be:
+- Byte literals: `b"prefix"`
+- Field references: `authority` (uses `.address().as_ref()`)
+- Byte slices: `&some_value.to_le_bytes()`
+- Any expression that evaluates to `&[u8]`
+
+```rust
+#[account(
+    seeds = [b"vault", authority.address().as_ref(), &vault_id.to_le_bytes()],
+    bump
+)]
+pub vault: &'info Account<Vault>,
+```
+
+### `bump`
+
+Used with `seeds` to handle the PDA bump seed. Two modes:
+
+**Without a value** -- the framework finds the bump by calling `find_program_address`:
+
+```rust
+#[account(seeds = [b"vault"], bump)]
+```
+
+The discovered bump is stored in `ctx.bumps.<field_name>`.
+
+**With a value** -- the framework verifies the PDA using the provided bump:
+
+```rust
+#[account(seeds = [b"vault"], bump = vault.bump)]
+```
+
+This is more CU-efficient since it skips the bump search.
+
+---
+
+## Lifecycle
+
+### `close = <destination>`
+
+Closes the account after the instruction executes:
+1. Zeros the discriminator bytes
+2. Drains all lamports to the destination account
+3. Reassigns ownership to the System program
+4. Resizes account data to zero
+
+| | |
+|---|---|
+| **Syntax** | `#[account(mut, close = destination_field)]` |
+| **Requires** | `mut` on this field, destination field must be writable |
+
+```rust
+#[derive(Accounts)]
+pub struct CloseVault<'info> {
+    #[account(mut, close = authority)]
+    pub vault: &'info mut Account<Vault>,
+    #[account(mut)]
+    pub authority: &'info Signer,
+}
+```
+
+### `realloc = <expr>`
+
+Resizes the account data to a new size, adjusting lamports for rent exemption. If growing, the payer provides additional lamports. If shrinking, excess lamports are returned to the payer.
+
+| | |
+|---|---|
+| **Syntax** | `#[account(mut, realloc = EXPR, realloc::payer = field_name)]` |
+| **Requires** | `mut` on this field |
+
+```rust
+#[account(mut, realloc = Vault::SPACE + extra_space, realloc::payer = payer)]
+pub vault: &'info mut Account<Vault>,
+```
+
+### `realloc::payer = <field>`
+
+Specifies the account that pays for (or receives excess from) reallocation.
+
+| | |
+|---|---|
+| **Syntax** | `#[account(realloc::payer = field_name)]` |
+| **Auto-detection** | Falls back to the `init` payer, then a field named `payer` |
+
+---
+
+## SPL Token Constraints
+
+These attributes validate SPL token account fields.
+
+### `token::mint = <field>`
+
+Validates that the token account's mint matches the address of the referenced mint account.
+
+| | |
+|---|---|
+| **Syntax** | `#[account(token::mint = mint_field)]` |
+| **Error on failure** | `ConstraintViolation` |
+
+### `token::authority = <field>`
+
+Validates that the token account's authority matches the address of the referenced account.
+
+| | |
+|---|---|
+| **Syntax** | `#[account(token::authority = authority_field)]` |
+| **Error on failure** | `ConstraintViolation` |
+
+```rust
+#[derive(Accounts)]
+pub struct Deposit<'info> {
+    #[account(mut, token::mint = mint, token::authority = authority)]
+    pub vault_token: &'info mut InterfaceAccount<Token>,
+    pub mint: &'info InterfaceAccount<Mint>,
+    pub authority: &'info Signer,
+    pub token_program: &'info Interface<TokenInterface>,
+}
+```
+
+---
+
+## SPL Mint Constraints
+
+These attributes are used with `init` to initialize a new mint account.
+
+### `mint::decimals = <expr>`
+
+Sets the decimals for a newly initialized mint.
+
+| | |
+|---|---|
+| **Syntax** | `#[account(init, mint::decimals = EXPR, mint::authority = field)]` |
+
+### `mint::authority = <field>`
+
+Sets the mint authority for a newly initialized mint.
+
+| | |
+|---|---|
+| **Syntax** | `#[account(init, mint::authority = authority_field)]` |
+
+### `mint::freeze_authority = <field>`
+
+Sets the freeze authority for a newly initialized mint.
+
+| | |
+|---|---|
+| **Syntax** | `#[account(init, mint::freeze_authority = field)]` |
+
+```rust
+#[derive(Accounts)]
+pub struct CreateMint<'info> {
+    #[account(
+        init,
+        payer = payer,
+        mint::decimals = 6,
+        mint::authority = authority,
+        mint::freeze_authority = authority
+    )]
+    pub mint: &'info mut InterfaceAccount<Mint>,
+    #[account(mut, signer)]
+    pub payer: &'info Signer,
+    pub authority: &'info Signer,
+    pub token_program: &'info Interface<TokenInterface>,
+    pub system_program: &'info Program<System>,
+}
+```
+
+---
+
+## Associated Token Account (ATA) Constraints
+
+These attributes handle associated token account creation and validation.
+
+### `associated_token::mint = <field>`
+
+Specifies the mint for ATA address derivation and validation.
+
+| | |
+|---|---|
+| **Syntax** | `#[account(associated_token::mint = mint_field)]` |
+
+### `associated_token::authority = <field>`
+
+Specifies the authority (wallet) for ATA address derivation and validation.
+
+| | |
+|---|---|
+| **Syntax** | `#[account(associated_token::authority = authority_field)]` |
+
+### `associated_token::token_program = <field>`
+
+Specifies the token program for ATA derivation (needed when using Token-2022).
+
+| | |
+|---|---|
+| **Syntax** | `#[account(associated_token::token_program = token_program_field)]` |
+
+```rust
+#[derive(Accounts)]
+pub struct InitAta<'info> {
+    #[account(
+        init,
+        payer = payer,
+        associated_token::mint = mint,
+        associated_token::authority = owner,
+        associated_token::token_program = token_program
+    )]
+    pub ata: &'info mut InterfaceAccount<Token>,
+    pub mint: &'info InterfaceAccount<Mint>,
+    pub owner: &'info Signer,
+    #[account(mut, signer)]
+    pub payer: &'info Signer,
+    pub token_program: &'info Interface<TokenInterface>,
+    pub associated_token_program: &'info Program<AssociatedTokenProgram>,
+    pub system_program: &'info Program<System>,
+}
+```
+
+---
+
+## Metadata Constraints
+
+These attributes are used with `init` to create Metaplex metadata and master edition accounts.
+
+### `metadata::name = <expr>`
+
+Sets the NFT/token name in the metadata account.
+
+### `metadata::symbol = <expr>`
+
+Sets the token symbol.
+
+### `metadata::uri = <expr>`
+
+Sets the metadata URI.
+
+### `metadata::seller_fee_basis_points = <expr>`
+
+Sets the seller fee in basis points (0-10000).
+
+### `metadata::is_mutable = <expr>`
+
+Sets whether the metadata can be updated after creation.
+
+### `master_edition::max_supply = <expr>`
+
+Sets the maximum supply for a master edition. Use `0` for unlimited.
+
+```rust
+#[derive(Accounts)]
+#[instruction(args)]
+pub struct CreateNft<'info> {
+    #[account(
+        init,
+        payer = payer,
+        mint::decimals = 0,
+        mint::authority = authority
+    )]
+    pub mint: &'info mut InterfaceAccount<Mint>,
+    #[account(
+        init,
+        payer = payer,
+        metadata::name = args.name,
+        metadata::symbol = args.symbol,
+        metadata::uri = args.uri,
+        metadata::seller_fee_basis_points = 500,
+        metadata::is_mutable = true
+    )]
+    pub metadata: &'info mut Account<MetadataAccount>,
+    #[account(
+        init,
+        payer = payer,
+        master_edition::max_supply = 0
+    )]
+    pub master_edition: &'info mut Account<MasterEditionAccount>,
+    #[account(mut, signer)]
+    pub payer: &'info Signer,
+    pub authority: &'info Signer,
+    pub token_program: &'info Interface<TokenInterface>,
+    pub system_program: &'info Program<System>,
+    pub metadata_program: &'info Program<MetadataProgram>,
+    pub rent: &'info Sysvar<Rent>,
+}
+```
+
+---
+
+## Complete Attribute Reference
+
+| Attribute | Syntax | Default Error |
+|-----------|--------|---------------|
+| `mut` | `#[account(mut)]` | `Immutable` |
+| `signer` | `#[account(signer)]` | `MissingRequiredSignature` |
+| `dup` | `#[account(dup)]` | -- |
+| `address` | `#[account(address = EXPR)]` | `AddressMismatch` |
+| `has_one` | `#[account(has_one = field)]` | `HasOneMismatch` |
+| `constraint` | `#[account(constraint = EXPR)]` | `ConstraintViolation` |
+| `init` | `#[account(init, payer = p)]` | `AccountAlreadyInitialized` |
+| `init_if_needed` | `#[account(init_if_needed, payer = p)]` | -- |
+| `payer` | `#[account(payer = field)]` | -- |
+| `space` | `#[account(space = EXPR)]` | -- |
+| `seeds` | `#[account(seeds = [...], bump)]` | `InvalidPda` |
+| `bump` | `#[account(bump)]` or `#[account(bump = EXPR)]` | -- |
+| `close` | `#[account(close = dest)]` | -- |
+| `realloc` | `#[account(realloc = EXPR)]` | `InvalidRealloc` |
+| `realloc::payer` | `#[account(realloc::payer = field)]` | -- |
+| `token::mint` | `#[account(token::mint = field)]` | `ConstraintViolation` |
+| `token::authority` | `#[account(token::authority = field)]` | `ConstraintViolation` |
+| `mint::decimals` | `#[account(mint::decimals = EXPR)]` | -- |
+| `mint::authority` | `#[account(mint::authority = field)]` | -- |
+| `mint::freeze_authority` | `#[account(mint::freeze_authority = field)]` | -- |
+| `associated_token::mint` | `#[account(associated_token::mint = field)]` | -- |
+| `associated_token::authority` | `#[account(associated_token::authority = field)]` | -- |
+| `associated_token::token_program` | `#[account(associated_token::token_program = field)]` | -- |
+| `metadata::name` | `#[account(metadata::name = EXPR)]` | -- |
+| `metadata::symbol` | `#[account(metadata::symbol = EXPR)]` | -- |
+| `metadata::uri` | `#[account(metadata::uri = EXPR)]` | -- |
+| `metadata::seller_fee_basis_points` | `#[account(metadata::seller_fee_basis_points = EXPR)]` | -- |
+| `metadata::is_mutable` | `#[account(metadata::is_mutable = EXPR)]` | -- |
+| `master_edition::max_supply` | `#[account(master_edition::max_supply = EXPR)]` | -- |

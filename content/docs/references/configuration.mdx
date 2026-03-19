@@ -1,6 +1,233 @@
 ---
 title: Configuration
-description: Quasar.toml configuration file reference.
+description: Quasar.toml project configuration and global config reference.
 ---
 
-Content coming soon.
+Quasar uses two configuration files: a per-project `Quasar.toml` at the project root, and a global `~/.quasar/config.toml` for user preferences that apply across all projects.
+
+## Project Configuration (`Quasar.toml`)
+
+Every Quasar project has a `Quasar.toml` file at the root, created by `quasar init`. This file is read by `quasar build`, `quasar test`, and other project-aware commands.
+
+### Full Schema
+
+```toml
+[project]
+name = "my-program"
+
+[toolchain]
+type = "solana"
+
+[testing]
+framework = "mollusk"
+```
+
+### `[project]`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | yes | The program name. Used as the crate name, binary name, and for keypair lookup in `target/deploy/`. Hyphens are converted to underscores for the Rust module name. |
+
+### `[toolchain]`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string | yes | Build toolchain to use. |
+
+Valid values:
+
+| Value | Description |
+|-------|-------------|
+| `"solana"` | Uses `cargo build-sbf` from the Solana SDK. The standard, stable toolchain. |
+| `"upstream"` | Uses `cargo +nightly build-bpf` from the upstream (Anza) SDK. Required for the latest SVM features. |
+
+### `[testing]`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `framework` | string | yes | Testing framework to use. |
+
+Valid values:
+
+| Value | Language | Description |
+|-------|----------|-------------|
+| `"none"` | -- | No test framework. `quasar test` is disabled. |
+| `"mollusk"` | Rust | Lightweight SBF emulator for unit tests. Fast iteration, no validator needed. |
+| `"quasarsvm-rust"` | Rust | Full SVM simulation with Rust test harness. Supports CPI, sysvars, and multi-program scenarios. |
+| `"quasarsvm-web3js"` | TypeScript | SVM simulation with `@solana/web3.js` client via Mocha. Integration-test style. |
+| `"quasarsvm-kit"` | TypeScript | SVM simulation with `@solana/kit` client via Mocha. Modern Solana SDK. |
+
+**Framework behavior:**
+
+- Rust frameworks (`mollusk`, `quasarsvm-rust`): `quasar test` runs `cargo test` and parses output
+- TypeScript frameworks (`quasarsvm-web3js`, `quasarsvm-kit`): `quasar test` runs Mocha with JSON reporter
+
+### Example Configurations
+
+**Minimal project with Solana toolchain and no tests:**
+
+```toml
+[project]
+name = "my-program"
+
+[toolchain]
+type = "solana"
+
+[testing]
+framework = "none"
+```
+
+**Full project with upstream toolchain and Rust tests:**
+
+```toml
+[project]
+name = "my-defi-protocol"
+
+[toolchain]
+type = "upstream"
+
+[testing]
+framework = "quasarsvm-rust"
+```
+
+---
+
+## Global Configuration (`~/.quasar/config.toml`)
+
+User preferences that apply across all projects. Created automatically when you run `quasar init` or `quasar config set`. Managed via the `quasar config` command.
+
+**Location:** `~/.quasar/config.toml`
+
+### Full Schema
+
+```toml
+[defaults]
+toolchain = "solana"
+framework = "mollusk"
+template = "minimal"
+
+[ui]
+animation = true
+color = true
+timing = true
+```
+
+### `[defaults]`
+
+Saved preferences used by `quasar init` when skipping prompts (with `-y` or by providing a project name).
+
+| Field | Type | Valid Values | Default |
+|-------|------|-------------|---------|
+| `toolchain` | string (optional) | `"solana"`, `"upstream"` | not set |
+| `framework` | string (optional) | `"none"`, `"mollusk"`, `"quasarsvm-rust"`, `"quasarsvm-web3js"`, `"quasarsvm-kit"` | not set |
+| `template` | string (optional) | `"minimal"`, `"full"` | not set |
+
+When a default is not set, `quasar init -y` uses the framework's built-in default.
+
+### `[ui]`
+
+Controls CLI output behavior.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `animation` | bool | `true` | Show the animated banner on `quasar init`. Automatically set to `false` after first run. |
+| `color` | bool | `true` | Use colored terminal output. |
+| `timing` | bool | `true` | Show build timing information (e.g., "Build complete in 1.2s"). |
+
+---
+
+## Configuration Precedence
+
+When both project and global configs exist:
+
+1. **Project config (`Quasar.toml`)** is always authoritative for build and test behavior. The `toolchain.type` and `testing.framework` fields in `Quasar.toml` determine how `quasar build` and `quasar test` operate.
+
+2. **Global config (`~/.quasar/config.toml`)** provides defaults for project scaffolding (`quasar init`) and UI preferences. Global defaults do not override `Quasar.toml` settings in an existing project.
+
+---
+
+## Managing Configuration
+
+### `quasar config` (interactive)
+
+Running `quasar config` without a subcommand opens an interactive menu for editing all global settings.
+
+### `quasar config get <KEY>`
+
+Read a single config value.
+
+```bash
+$ quasar config get ui.animation
+true
+
+$ quasar config get defaults.toolchain
+solana
+```
+
+### `quasar config set <KEY> <VALUE>`
+
+Write a config value. Invalid values are rejected with an error message showing valid options.
+
+```bash
+$ quasar config set ui.color false
+  ui.color = false
+
+$ quasar config set defaults.framework quasarsvm-rust
+  defaults.framework = quasarsvm-rust
+
+$ quasar config set defaults.toolchain invalid
+  invalid value for defaults.toolchain: invalid
+  valid: solana, upstream
+```
+
+Boolean values accept: `true`, `false`, `1`, `0`, `yes`, `no`, `on`, `off`.
+
+To unset a default, use `none`, `null`, or an empty string:
+
+```bash
+$ quasar config set defaults.toolchain none
+```
+
+### `quasar config list`
+
+Print all config values and the config file path.
+
+```bash
+$ quasar config list
+  config: /Users/you/.quasar/config.toml
+
+  [defaults]
+    toolchain  = solana
+    framework  = mollusk
+    template   = minimal
+
+  [ui]
+    animation  = false
+    color      = true
+    timing     = true
+```
+
+### `quasar config reset`
+
+Restore factory defaults. Preserves the `animation = false` setting if it was previously disabled (to avoid replaying the init animation).
+
+```bash
+$ quasar config reset
+  config reset to defaults
+```
+
+---
+
+## All Config Keys
+
+| Key | Scope | Type | Valid Values |
+|-----|-------|------|-------------|
+| `defaults.toolchain` | Global | string | `solana`, `upstream` |
+| `defaults.framework` | Global | string | `none`, `mollusk`, `quasarsvm-rust`, `quasarsvm-web3js`, `quasarsvm-kit` |
+| `defaults.template` | Global | string | `minimal`, `full` |
+| `ui.animation` | Global | bool | `true`, `false` |
+| `ui.color` | Global | bool | `true`, `false` |
+| `ui.timing` | Global | bool | `true`, `false` |
+| `project.name` | Project | string | any valid crate name |
+| `toolchain.type` | Project | string | `solana`, `upstream` |
+| `testing.framework` | Project | string | `none`, `mollusk`, `quasarsvm-rust`, `quasarsvm-web3js`, `quasarsvm-kit` |
