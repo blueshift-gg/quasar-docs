@@ -3,7 +3,7 @@ title: IDL Generation
 description: How Quasar generates program interface descriptions and client code from your Rust source.
 ---
 
-The Interface Description Language (IDL) is a JSON file that fully describes your program's interface: instructions, accounts, events, types, and errors. Quasar generates it from your Rust source code and uses it to produce TypeScript and Rust client libraries.
+The IDL is a JSON file describing your program's interface: instructions, accounts, events, types, and errors. Quasar generates it from your Rust source and uses it to produce TypeScript and Rust client libraries.
 
 ## What the IDL Contains
 
@@ -57,15 +57,11 @@ Each instruction entry includes the name, discriminator bytes, accounts with the
 }
 ```
 
-Key details:
-- **Discriminator**: The byte sequence from `#[instruction(discriminator = N)]`. Used for instruction routing.
-- **PDA seeds**: Encoded as `const` (literal bytes) or `account` (reference to another account in the list).
-- **Account flags**: `writable` and `signer` are only present when `true`. Known program addresses are included directly.
-- **hasRemaining**: Set to `true` when the instruction uses `CtxWithRemaining`, signaling that additional accounts may follow.
+PDA seeds are encoded as `const` (literal bytes) or `account` (reference to another account). `writable` and `signer` flags are only present when `true`. Known program addresses (e.g., system program, token program) are included as `address` fields. When the instruction uses `CtxWithRemaining`, `hasRemaining` is set to `true`.
 
 ### Accounts
 
-Account definitions list each `#[account]` struct with its discriminator:
+Each `#[account]` struct is listed with its discriminator:
 
 ```json
 {
@@ -73,8 +69,6 @@ Account definitions list each `#[account]` struct with its discriminator:
   "discriminator": [1]
 }
 ```
-
-The discriminator comes from `#[account(discriminator = N)]` and is used for on-chain account type validation.
 
 ### Events
 
@@ -112,7 +106,7 @@ Struct types referenced by instructions or accounts appear in the `types` array:
 
 #### Dynamic Field Types
 
-Quasar's zero-copy dynamic fields have dedicated IDL types:
+Quasar's zero-copy dynamic fields have dedicated IDL representations:
 
 ```json
 { "name": "label", "type": { "string": { "maxLength": 32 } } }
@@ -120,13 +114,13 @@ Quasar's zero-copy dynamic fields have dedicated IDL types:
 { "name": "data", "type": { "tail": { "element": "u8" } } }
 ```
 
-- **`string`**: Maps to `String<'a, MAX>` in Rust. Includes the maximum byte length.
-- **`vec`**: Maps to `Vec<'a, T, MAX>`. Includes the item type and maximum element count.
-- **`tail`**: Maps to `Tail<T>`. Represents a trailing byte region with no length prefix.
+- **`string`**: Maps to `String<P, MAX>` in Rust (e.g., `String<u8, 32>`). Includes the maximum byte length.
+- **`vec`**: Maps to `Vec<T, P, MAX>` (e.g., `Vec<Address, u32, 10>`). Includes the item type and maximum element count.
+- **`tail`**: Maps to a bare `&[u8]` or `&str` in Rust. Trailing data with no length prefix.
 
 ### Errors
 
-Custom error codes defined with `#[error_code]` are included with their code number and optional message:
+`#[error_code]` enum variants are numbered starting from 6000 (or from a custom base if the first variant specifies one). Framework errors (`QuasarError`) start at 3000.
 
 ```json
 {
@@ -135,8 +129,6 @@ Custom error codes defined with `#[error_code]` are included with their code num
   "msg": "Invalid amount"
 }
 ```
-
-Program-specific error codes start at 6000. Framework errors (`QuasarError`) start at 3000.
 
 ## Supported Primitive Types
 
@@ -188,21 +180,16 @@ target/
 
 ### TypeScript Clients
 
-Two TypeScript client flavors are generated:
+Two flavors:
 
-- **`web3.ts`**: Uses `@solana/web3.js` v2. Provides typed instruction builders and transaction helpers.
-- **`kit.ts`**: Uses `@solana/kit`. Same typed interface, different underlying transport library.
+- **`web3.ts`**: Uses `@solana/web3.js` v2.
+- **`kit.ts`**: Uses `@solana/kit`.
 
-Both clients include:
-- Typed instruction builder functions for each instruction
-- Account type definitions
-- Event type definitions
-- Discriminator constants
-- Codec functions for types that need serialization (when `@solana/codecs` is needed, it is added as a dependency automatically)
+Both include typed instruction builders, account/event type definitions, discriminator constants, and codec functions (with `@solana/codecs` added as a dependency when needed).
 
 ### Rust Client
 
-The generated Rust client is a standalone crate with typed `Instruction` builders. For example, the vault program produces:
+A standalone crate with typed `Instruction` builders. Each instruction struct implements `From<T> for Instruction`:
 
 ```rust
 pub struct DepositInstruction {
@@ -212,27 +199,6 @@ pub struct DepositInstruction {
     pub amount: u64,
 }
 
-impl From<DepositInstruction> for Instruction {
-    fn from(ix: DepositInstruction) -> Instruction {
-        let accounts = vec![
-            AccountMeta::new(ix.user, true),
-            AccountMeta::new(ix.vault, false),
-            AccountMeta::new_readonly(ix.system_program, false),
-        ];
-        let mut data = vec![0];
-        data.extend_from_slice(&ix.amount.to_le_bytes());
-        Instruction {
-            program_id: crate::ID,
-            accounts,
-            data,
-        }
-    }
-}
-```
-
-Each instruction struct implements `From<T> for Instruction`, so building transactions is straightforward:
-
-```rust
 let ix: Instruction = DepositInstruction {
     user: user_pubkey,
     vault: vault_pda,
@@ -253,9 +219,7 @@ This reads the IDL at macro expansion time and generates a module with `CpiCall`
 
 ## Discriminator Collision Detection
 
-The IDL parser enforces that all instruction discriminators within a program are unique and have the same byte length. If two instructions share a discriminator value, compilation fails with an error message identifying the conflict. This is checked at compile time in the `#[program]` macro, so collisions are caught before your program ever reaches the chain.
-
-Event discriminators occupy a separate namespace (prefixed with `0xFF` on-chain) and do not conflict with instruction discriminators.
+The `#[program]` macro enforces at compile time that all instruction discriminators are unique and have the same byte length. Event discriminators occupy a separate namespace (prefixed with `0xFF` on-chain) and do not conflict with instruction discriminators.
 
 ## Next Steps
 

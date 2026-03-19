@@ -3,7 +3,7 @@ title: TypeScript Client
 description: Using the auto-generated TypeScript client to interact with Quasar programs.
 ---
 
-Quasar auto-generates TypeScript clients from your program's IDL, giving you type-safe instruction builders, account deserializers, and event parsers. Two variants are generated: one for `@solana/web3.js` and one for `@solana/kit`, so you can use whichever SDK your project prefers.
+Quasar generates TypeScript clients from your program's IDL in two variants: one for `@solana/web3.js` and one for `@solana/kit`. Both provide type-safe instruction builders, account deserializers, and event parsers.
 
 ## Generating the client
 
@@ -20,7 +20,7 @@ This parses your program source and produces:
 - `target/client/typescript/<name>/kit.ts` -- TypeScript client for `@solana/kit`.
 - `target/client/typescript/<name>/package.json` -- Package manifest with dependency declarations.
 
-The `quasar build` command also generates these files automatically, so you typically do not need to run `quasar idl` separately unless you want to regenerate clients without rebuilding the program.
+`quasar build` also generates these files automatically, so you only need to run `quasar idl` separately when you want to regenerate clients without rebuilding the program.
 
 ## Directory structure
 
@@ -40,7 +40,9 @@ The `package.json` exports both variants:
 
 ```json
 {
-  "name": "<name>-client",
+  "name": "<crate_name>-client",
+  "version": "<version>",
+  "private": true,
   "exports": {
     "./web3.js": "./web3.ts",
     "./kit": "./kit.ts"
@@ -53,7 +55,7 @@ The `package.json` exports both variants:
 }
 ```
 
-The `@solana/codecs` dependency is included only when your program has instruction arguments or custom types that require encoding.
+The `name` and `version` fields are derived from your program's `Cargo.toml`. The `@solana/codecs` dependency is included only when your program has instruction arguments or custom types that require encoding; otherwise it is omitted.
 
 ## Web3.js client
 

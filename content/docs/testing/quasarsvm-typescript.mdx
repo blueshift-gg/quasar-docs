@@ -3,11 +3,11 @@ title: QuasarSVM (TypeScript)
 description: Testing Quasar programs with the TypeScript-based QuasarSVM test harness.
 ---
 
-QuasarSVM ships TypeScript bindings for both `@solana/web3.js` and `@solana/kit`. This lets you write Mocha tests in TypeScript that execute your program in a local SVM -- no validator required.
+QuasarSVM ships TypeScript bindings for both `@solana/web3.js` and `@solana/kit`. Write Mocha tests in TypeScript that execute your program in a local SVM -- no validator required.
 
-## Choosing a Variant
+## Choosing a variant
 
-When you run `quasar init`, you are prompted to choose between two TypeScript variants:
+When you run `quasar init`, you choose between two TypeScript variants:
 
 | Variant | Package | Best for |
 |---------|---------|----------|
@@ -16,7 +16,7 @@ When you run `quasar init`, you are prompted to choose between two TypeScript va
 
 Both variants share the same underlying SVM execution engine. The difference is in how you construct accounts and instructions.
 
-## Setup: Web3.js Variant
+## Setup: Web3.js variant
 
 `quasar init` generates the full scaffolding. The key files are:
 
@@ -47,7 +47,7 @@ Install dependencies after scaffolding:
 npm install
 ```
 
-## Setup: Kit Variant
+## Setup: Kit variant
 
 The Kit variant uses `@solana/kit` instead:
 
@@ -62,7 +62,7 @@ The Kit variant uses `@solana/kit` instead:
 
 The test API is slightly different -- Kit uses `address()` and `lamports()` helpers instead of `Keypair` and raw bigints.
 
-## Writing Tests with Web3.js
+## Writing tests with Web3.js
 
 The generated test file imports the auto-generated TypeScript client from `target/client/typescript/` and creates a `QuasarSvm` instance:
 
@@ -110,13 +110,13 @@ describe("MyProgram", async () => {
 });
 ```
 
-### Key Concepts
+### Key concepts
 
 - **`QuasarSvm`** -- The local VM instance. Call `.addSystemProgram()` to include the system program, and `.addProgram()` to load your compiled binary.
 - **`processInstruction`** -- Executes a single instruction against the provided accounts and returns a result with `status`, `logs`, and updated account state.
 - **`KeyedAccountInfo`** -- Pairs an account address with its initial state (lamports, data, owner).
 
-## Writing Tests with Kit
+## Writing tests with Kit
 
 The Kit variant uses `@solana/kit` types:
 
@@ -169,7 +169,7 @@ The main differences from Web3.js:
 - Uses typed `lamports()` and `address()` helpers
 - The program address is imported as `PROGRAM_ADDRESS` from the generated client
 
-## Sending Transactions
+## Sending transactions
 
 Both variants use `processInstruction()` for single-instruction execution. The result object contains:
 
@@ -187,9 +187,9 @@ if (!result.status.ok) {
 console.log("CU used:", result.computeUnitsConsumed);
 ```
 
-## Account Deserialization
+## Account deserialization
 
-The generated TypeScript client includes deserialization functions for your program's account types. After executing an instruction, you can deserialize the resulting account data:
+The generated TypeScript client includes deserialization functions for your program's account types. After executing an instruction, deserialize the resulting account data:
 
 ```typescript
 const result = vm.processInstruction(depositInstruction, accounts);
@@ -199,7 +199,7 @@ assert.isTrue(result.status.ok);
 const vaultData = result.accounts[1].data;
 ```
 
-## Running Tests
+## Running tests
 
 ```bash
 quasar test
@@ -207,7 +207,7 @@ quasar test
 
 This builds the program, generates the TypeScript client, installs npm dependencies if needed, and runs `mocha`. Test results are parsed from Mocha's JSON reporter for structured terminal output.
 
-You can filter tests:
+Filter tests:
 
 ```bash
 quasar test --filter "deposit"
@@ -219,7 +219,7 @@ Or run mocha directly:
 npx mocha --require tsx --delay tests/*.test.ts
 ```
 
-## Watch Mode
+## Watch mode
 
 For fast iteration, use watch mode to rebuild and re-run tests on every source change:
 

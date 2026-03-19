@@ -3,9 +3,7 @@ title: Account Layout
 description: How Quasar lays out account data in memory for zero-copy access.
 ---
 
-When you annotate a struct with `#[account]`, Quasar generates a **zero-copy companion struct** -- a `#[repr(C)]` struct where every field that needs alignment greater than 1 has been replaced with its Pod equivalent. This companion struct is what actually overlays the raw account data buffer. Your code interacts with it through `Deref`/`DerefMut`, so the translation is invisible at the call site.
-
-This page explains exactly what gets generated, how the memory is laid out byte-by-byte, and the pointer cast mechanism that makes it all work.
+When you annotate a struct with `#[account]`, Quasar generates a **zero-copy companion struct** -- a `#[repr(C)]` struct where every field that needs alignment greater than 1 has been replaced with its Pod equivalent. This companion struct overlays the raw account data buffer. Your code interacts with it through `Deref`/`DerefMut`, so the translation is invisible at the call site.
 
 ## From source to companion struct
 
@@ -230,7 +228,7 @@ Native types like `u64` are automatically converted to their Pod equivalents whe
 
 ## Reading and writing fields
 
-With the view type and `Deref` in place, reading fields is straightforward:
+With `Deref` in place, field reads go directly through the pointer cast:
 
 ```rust
 // In an instruction handler

@@ -3,11 +3,11 @@ title: Accounts and Validation
 description: Defining account structs with constraints, ownership, and signer checks — the complete reference for Quasar's account types and validation attributes.
 ---
 
-Accounts are the fundamental building block of Solana programs. Quasar provides a set of zero-copy account wrapper types and a `#[derive(Accounts)]` macro that generates all parsing and validation code at compile time. This page covers every account type, the `#[account]` macro for defining your own data types, and the complete set of validation attributes.
+Quasar provides zero-copy account wrapper types and a `#[derive(Accounts)]` macro that generates all parsing and validation code at compile time.
 
 ## Account Types
 
-Quasar provides several built-in account types, each enforcing different validation rules during parsing. All types are `#[repr(transparent)]` wrappers over `AccountView`, which means they are constructed via zero-cost pointer casts -- no heap allocation or data copying.
+All types are `#[repr(transparent)]` wrappers over `AccountView`, constructed via pointer casts -- no heap allocation or data copying.
 
 ### `Account<T>`
 
@@ -120,7 +120,7 @@ This generates:
 
 ### Dynamic Accounts
 
-Accounts can contain variable-length fields using `String<'a, MAX>` and `Vec<'a, T, MAX>`:
+Accounts can contain variable-length fields using `String` and `Vec` marker types:
 
 ```rust
 #[account(discriminator = 1)]
@@ -128,19 +128,21 @@ pub struct MultisigConfig<'a> {
     pub creator: Address,
     pub threshold: u8,
     pub bump: u8,
-    pub label: String<'a, 32>,
-    pub signers: Vec<'a, Address, 10>,
+    pub label: String<'a, 32>,       // u32 prefix (default), max 32 bytes
+    pub signers: Vec<'a, Address, 10>, // u32 prefix (default), max 10 elements
 }
 ```
 
-Dynamic accounts have a more complex layout:
+`String<P, MAX>` and `Vec<T, P, MAX>` are marker types recognized by the `#[account]` macro. `P` is the length prefix type (`u8`, `u16`, or `u32`, defaulting to `u32`). The `'a` lifetime form (`String<'a, MAX>`) is backward-compatible shorthand that defaults to a `u32` prefix.
+
+The on-disk layout is:
 1. Discriminator bytes
-2. Fixed-size ZC header (containing `creator`, `threshold`, `bump`)
+2. Fixed-size ZC header (`creator`, `threshold`, `bump`)
 3. Length-prefixed dynamic fields (`label`, `signers`)
 
-The generated view type caches byte offsets during parsing for O(1) field access. Each dynamic field gets:
+Each dynamic field generates:
 - A getter (e.g., `label() -> &str`, `signers() -> &[Address]`)
-- A raw accessor (`label_raw()`) for CPI pass-through
+- A raw accessor (`label_raw() -> RawEncoded`) for CPI pass-through without re-encoding
 - A setter (`set_label(&mut self, payer, value)`) that handles reallocation
 - For Vec fields, a mutable accessor (`signers_mut() -> &mut [Address]`)
 
@@ -185,7 +187,7 @@ pub escrow: &'info mut Account<Escrow>,
 | Attribute | Description |
 |-----------|-------------|
 | `seeds = [expr, ...]` | PDA seed expressions. Account field references are automatically converted to their address bytes. |
-| `bump` | Find the bump seed via `try_find_program_address`. The discovered bump is stored in the `Bumps` struct. |
+| `bump` | Find the bump seed via `based_try_find_program_address`. The discovered bump is stored in the `Bumps` struct. |
 | `bump = <expr>` | Use a known bump value (e.g., `bump = escrow.bump`). Verifies the PDA address instead of searching. |
 
 When `seeds` and `bump` are used together, the macro generates PDA verification code. See [Program Derived Addresses](./pda) for details.
@@ -285,17 +287,17 @@ pub fn withdraw_tokens_and_close(&mut self, bumps: &TakeBumps) -> Result<(), Pro
 
 ## Account Parsing Pipeline
 
-Understanding the parsing pipeline helps when debugging. When an instruction is invoked:
+When an instruction is invoked:
 
-1. **Raw buffer walk**: `parse_accounts` walks the SVM input buffer, reading each account's 4-byte header (`[borrow_state, is_signer, is_writable, executable]`) as a single `u32` comparison against the expected value. This catches missing signatures, non-writable accounts, and duplicate accounts in a single instruction.
+1. **Raw buffer walk**: `parse_accounts` walks the SVM input buffer. Each account's 4-byte header `[borrow_state, is_signer, is_writable, executable]` is read as a single `u32` and compared against a compile-time constant (e.g., `NODUP_MUT_SIGNER = 0xFF | (1 << 8) | (1 << 16)`). This catches missing signatures, non-writable accounts, and duplicate accounts in one instruction. If the check fails, `decode_header_error` decomposes the mismatch into the appropriate `ProgramError`.
 
 2. **Typed construction**: Each field is constructed from its `AccountView` via pointer cast (for static types) or offset-cached parsing (for dynamic types).
 
-3. **Constraint evaluation**: After all accounts are constructed, `has_one`, `constraint`, `address`, and PDA checks run in order.
+3. **PDA verification and initialization**: `init` / `init_if_needed` accounts are created via CPI to the System program (and optionally the Token program). PDA address verification runs for `seeds` + `bump` fields.
 
-4. **Initialization**: If any `init` or `init_if_needed` accounts need creation, CPI calls to the System program (and optionally the Token program) happen at this stage.
+4. **Constraint evaluation**: `has_one`, `constraint`, and `address` checks run in declaration order.
 
-5. **Epilogue**: After the instruction handler returns, `close` operations execute.
+5. **Epilogue**: After the instruction handler returns, `close` operations execute (zero discriminator, drain lamports, reassign to System program, resize to zero).
 
 ## Next Steps
 

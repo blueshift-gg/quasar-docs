@@ -3,7 +3,7 @@ title: Flamegraphs
 description: Interactive flamegraph viewer for compute unit analysis.
 ---
 
-Every time you run `quasar profile`, the profiler generates a JSON profile and starts an interactive flamegraph viewer on a local HTTP server. This gives you a visual breakdown of where compute units are spent in your program.
+When you run `quasar profile`, the profiler generates a JSON profile. If the frontend assets are present in the profile web root (an `index.html` file), it also starts a local HTTP server serving the interactive flamegraph viewer. This gives you a visual breakdown of where compute units are spent in your program.
 
 ## Accessing the Flamegraph
 
@@ -24,10 +24,10 @@ Open the URL in your browser to view the interactive flamegraph.
 
 The flamegraph viewer runs as a lightweight HTTP server on port 7777. It is designed to stay out of your way:
 
-- **Background process** -- The server forks into the background when started by `quasar profile`, so your terminal stays free.
-- **Auto-shutdown** -- After 30 seconds of inactivity (no HTTP connections), the server automatically shuts itself down. If you close the browser tab, the server will stop on its own.
-- **Port reuse** -- If the server is already running from a previous profile, the profiler detects the existing server and prints the link without starting a new one.
-- **Static file serving** -- The server serves the frontend SPA and profile JSON files from the `target/profile/` directory.
+- **Background process** -- The server forks into the background via `fork()` and detaches with `setsid()`, so your terminal stays free.
+- **Auto-shutdown** -- After 30 seconds of inactivity (no new TCP connections), the server shuts itself down. If no connection ever arrives, it gives up after 60 seconds.
+- **Port reuse** -- If port 7777 is already in use from a previous profile, the profiler detects the existing server via a TCP connect probe and prints the link without starting a new one.
+- **Static file serving** -- The server serves the frontend SPA, profile JSON files, and directory listings from the profile web root.
 
 For `--diff` mode, the server runs in blocking mode (foreground) and stays alive until you press Ctrl-C, since the diff view requires ongoing interaction.
 
@@ -69,19 +69,19 @@ You can select different profiles from the viewer to see how your program's CU u
 
 ## Diff View
 
-When you run `quasar profile --diff <PROGRAM_ADDRESS>`, the viewer opens in diff mode:
+When you run `quasar profile --diff <PROGRAM_NAME>`, the profiler prints a URL with `&view=diff` and starts the server in blocking (foreground) mode:
 
 ```bash
-quasar profile --diff MyProgram111111111111111111111111
+quasar profile --diff my_program
 ```
 
-The diff view overlays two flamegraphs, highlighting functions that changed between builds or between your local build and a deployed program. This is useful for:
+Open the printed URL in your browser. The diff view overlays two flamegraphs, highlighting functions that changed. This is useful for:
 
 - Comparing CU usage before and after an optimization
 - Verifying that a refactor did not regress performance
-- Benchmarking your local build against the production deployment
+- Benchmarking your local build against a previous profile
 
-The `--diff` server runs in blocking mode. Press Ctrl-C to stop it when you are done.
+The `--diff` server runs in the foreground. Press Ctrl-C to stop it when you are done.
 
 ## Sharing Flamegraphs
 
@@ -97,7 +97,7 @@ This uploads the profile JSON to a public GitHub Gist using the `gh` CLI. The gi
   https://gist.github.com/username/abc123...
 ```
 
-Anyone with the URL can load the profile into the flamegraph viewer. This requires `gh` to be installed and authenticated (`gh auth login`).
+Anyone with the URL can download the profile JSON. This requires `gh` to be installed and authenticated (`gh auth login`).
 
 ## Understanding the Profile JSON
 
@@ -135,21 +135,18 @@ The folded stacks are built by walking every instruction in the `.text` section 
 A typical profiling workflow looks like this:
 
 ```bash
-# 1. Build with debug symbols
-quasar build --debug
-
-# 2. Profile and open flamegraph
+# 1. Profile (auto-builds with debug symbols if needed)
 quasar profile
 
-# 3. Identify hot functions in the flamegraph
-#    (click around, look for wide bars)
+# 2. Open the flamegraph URL in your browser
+#    Identify hot functions (wide bars = more CU)
 
-# 4. Make optimizations in your code
+# 3. Make optimizations in your code
 
-# 5. Re-profile to see the delta
+# 4. Re-profile to see the delta
 quasar profile
 
-# 6. Repeat until satisfied with CU usage
+# 5. Repeat until satisfied with CU usage
 ```
 
 For continuous iteration, use watch mode:

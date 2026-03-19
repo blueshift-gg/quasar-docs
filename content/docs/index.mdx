@@ -1,6 +1,48 @@
 ---
-title: Documentation
-description: Quasar documentation — zero-copy, zero-allocation Solana programs with Anchor-level developer experience.
+title: Quasar
+description: Zero-copy, zero-allocation Solana programs with Anchor-level developer experience.
 ---
 
-Welcome to the Quasar documentation. Use the sidebar to navigate through the guides, concepts, and references.
+Quasar is a Solana program framework that combines zero-copy account access, zero-allocation dispatch, and familiar Anchor-style macros. Programs built with Quasar achieve compute unit costs comparable to hand-written Pinocchio code while keeping the ergonomics of `#[program]`, `#[account]`, and `#[derive(Accounts)]`.
+
+## Get started
+
+<Cards>
+  <Card title="Installation" href="/docs/getting-started/installation">
+    Install the Quasar CLI and set up your development environment.
+  </Card>
+  <Card title="Quickstart" href="/docs/getting-started/quickstart">
+    Create, build, test, and deploy your first Quasar program.
+  </Card>
+  <Card title="Migrating from Anchor" href="/docs/getting-started/migrating-from-anchor">
+    Side-by-side code comparisons for every Anchor concept.
+  </Card>
+</Cards>
+
+## Learn the concepts
+
+<Cards>
+  <Card title="Program Structure" href="/docs/core-concepts/program-structure">
+    How `#[program]` generates your entrypoint, dispatch, and allocator.
+  </Card>
+  <Card title="Accounts & Validation" href="/docs/core-concepts/accounts-and-validation">
+    Account types, constraints, initialization, closing, and reallocation.
+  </Card>
+  <Card title="Cross-Program Invocation" href="/docs/core-concepts/cpi">
+    Stack-allocated CPI with const-generic `CpiCall`.
+  </Card>
+</Cards>
+
+## Build something
+
+<Cards>
+  <Card title="Build a Vault" href="/docs/guides/build-a-vault">
+    End-to-end guide: deposit and withdraw SOL with PDA signing.
+  </Card>
+  <Card title="Build an Escrow" href="/docs/guides/build-an-escrow">
+    Token swap escrow with SPL CPI, events, and account closing.
+  </Card>
+  <Card title="Build a Multisig" href="/docs/guides/build-a-multisig">
+    Dynamic signers, remaining accounts, and threshold logic.
+  </Card>
+</Cards>

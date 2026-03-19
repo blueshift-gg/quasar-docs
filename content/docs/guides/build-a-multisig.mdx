@@ -3,7 +3,7 @@ title: Build a Multisig
 description: Step-by-step guide to building a multisig wallet program with Quasar.
 ---
 
-In this guide, we will build a multisig wallet program with Quasar. A multisig requires M-of-N signers to approve a transfer before it executes. This program introduces several advanced Quasar features: dynamic account fields (`String` and `Vec`), remaining accounts for variable-length signer lists, and PDA-signed transfers from a shared vault.
+This guide builds a multisig wallet program with Quasar. A multisig requires M-of-N signers to approve a transfer before it executes. The program uses dynamic account fields (`String` and `Vec`), remaining accounts for variable-length signer lists, and PDA-signed transfers from a shared vault.
 
 By the end, you will understand how to:
 
@@ -33,6 +33,8 @@ debug = []
 
 [dependencies]
 quasar-lang = { version = "0.1.0" }
+solana-address = { version = "2.2.0" }
+solana-instruction = { version = "3.2.0" }
 ```
 
 No SPL dependencies are needed -- this multisig manages only SOL lamports.
@@ -53,7 +55,7 @@ src/
 
 ## Defining the multisig state
 
-The multisig configuration account is where things get interesting. Open `state.rs`:
+The multisig configuration account has both fixed and dynamic fields. Here is `state.rs`:
 
 ```rust
 use quasar_lang::prelude::*;
@@ -67,8 +69,6 @@ pub struct MultisigConfig<\'a> {
     pub signers: Vec<\'a, Address, 10>,
 }
 ```
-
-This account has both fixed and dynamic fields:
 
 **Fixed fields** come first:
 - **`creator`** -- The 32-byte address of the multisig creator.
@@ -230,8 +230,6 @@ impl<\'info> Create<\'info> {
 }
 ```
 
-Let\'s walk through this step by step.
-
 **Collecting signer addresses from remaining accounts.** We iterate over `remaining.iter()`, which yields each account beyond the four declared in the struct. For each account:
 
 1. We check we have not exceeded the maximum of 10 signers.
@@ -390,6 +388,7 @@ Add the test dependencies:
 [dev-dependencies]
 mollusk-svm = "0.10.3"
 solana-account = { version = "3.4.0" }
+solana-address = { version = "2.2.0", features = ["decode"] }
 solana-instruction = { version = "3.2.0", features = ["bincode"] }
 ```
 

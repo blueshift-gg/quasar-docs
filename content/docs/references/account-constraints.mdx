@@ -8,7 +8,7 @@ Account constraints are specified as attributes on fields within a `#[derive(Acc
 ```rust
 #[derive(Accounts)]
 pub struct MyInstruction<'info> {
-    #[account(mut, signer, has_one = authority)]
+    #[account(mut, has_one = authority)]
     pub vault: &'info mut Account<Vault>,
     pub authority: &'info Signer,
 }
@@ -45,20 +45,6 @@ Marks the account as mutable. Generates a runtime check that the account was pas
 ```rust
 #[account(mut)]
 pub vault: &'info mut Account<Vault>,
-```
-
-### `signer`
-
-Requires the account to be a transaction signer. Automatically implied for `Signer` type fields; use this on other types when signer status is needed.
-
-| | |
-|---|---|
-| **Syntax** | `#[account(signer)]` |
-| **Error on failure** | `ProgramError::MissingRequiredSignature` |
-
-```rust
-#[account(mut, signer)]
-pub authority: &'info mut Account<Vault>,
 ```
 
 ### `dup`
@@ -177,7 +163,7 @@ Creates a new account via CPI to the System program. Automatically:
 pub struct CreateVault<'info> {
     #[account(init, payer = payer)]
     pub vault: &'info mut Account<Vault>,
-    #[account(mut, signer)]
+    #[account(mut)]
     pub payer: &'info Signer,
     pub system_program: &'info Program<System>,
 }
@@ -328,34 +314,37 @@ Specifies the account that pays for (or receives excess from) reallocation.
 
 ## SPL Token Constraints
 
-These attributes validate SPL token account fields.
+These attributes are used with `init` or `init_if_needed` to initialize a token account with specific mint and authority. Both `token::mint` and `token::authority` must be specified together.
 
 ### `token::mint = <field>`
 
-Validates that the token account's mint matches the address of the referenced mint account.
+Sets the mint for a newly initialized token account.
 
 | | |
 |---|---|
-| **Syntax** | `#[account(token::mint = mint_field)]` |
-| **Error on failure** | `ConstraintViolation` |
+| **Syntax** | `#[account(init, payer = p, token::mint = mint_field, token::authority = auth_field)]` |
+| **Requires** | `init` or `init_if_needed`, paired with `token::authority` |
 
 ### `token::authority = <field>`
 
-Validates that the token account's authority matches the address of the referenced account.
+Sets the authority for a newly initialized token account.
 
 | | |
 |---|---|
-| **Syntax** | `#[account(token::authority = authority_field)]` |
-| **Error on failure** | `ConstraintViolation` |
+| **Syntax** | `#[account(init, payer = p, token::mint = mint_field, token::authority = auth_field)]` |
+| **Requires** | `init` or `init_if_needed`, paired with `token::mint` |
 
 ```rust
 #[derive(Accounts)]
-pub struct Deposit<'info> {
-    #[account(mut, token::mint = mint, token::authority = authority)]
+pub struct InitTokenAccount<'info> {
+    #[account(init, payer = payer, token::mint = mint, token::authority = authority)]
     pub vault_token: &'info mut InterfaceAccount<Token>,
     pub mint: &'info InterfaceAccount<Mint>,
     pub authority: &'info Signer,
+    #[account(mut)]
+    pub payer: &'info Signer,
     pub token_program: &'info Interface<TokenInterface>,
+    pub system_program: &'info Program<System>,
 }
 ```
 
@@ -400,7 +389,7 @@ pub struct CreateMint<'info> {
         mint::freeze_authority = authority
     )]
     pub mint: &'info mut InterfaceAccount<Mint>,
-    #[account(mut, signer)]
+    #[account(mut)]
     pub payer: &'info Signer,
     pub authority: &'info Signer,
     pub token_program: &'info Interface<TokenInterface>,
@@ -451,7 +440,7 @@ pub struct InitAta<'info> {
     pub ata: &'info mut InterfaceAccount<Token>,
     pub mint: &'info InterfaceAccount<Mint>,
     pub owner: &'info Signer,
-    #[account(mut, signer)]
+    #[account(mut)]
     pub payer: &'info Signer,
     pub token_program: &'info Interface<TokenInterface>,
     pub associated_token_program: &'info Program<AssociatedTokenProgram>,
@@ -491,7 +480,7 @@ Sets the maximum supply for a master edition. Use `0` for unlimited.
 
 ```rust
 #[derive(Accounts)]
-#[instruction(args)]
+#[instruction(name: &[u8], symbol: &[u8], uri: &[u8])]
 pub struct CreateNft<'info> {
     #[account(
         init,
@@ -503,9 +492,9 @@ pub struct CreateNft<'info> {
     #[account(
         init,
         payer = payer,
-        metadata::name = args.name,
-        metadata::symbol = args.symbol,
-        metadata::uri = args.uri,
+        metadata::name = name,
+        metadata::symbol = symbol,
+        metadata::uri = uri,
         metadata::seller_fee_basis_points = 500,
         metadata::is_mutable = true
     )]
@@ -516,7 +505,7 @@ pub struct CreateNft<'info> {
         master_edition::max_supply = 0
     )]
     pub master_edition: &'info mut Account<MasterEditionAccount>,
-    #[account(mut, signer)]
+    #[account(mut)]
     pub payer: &'info Signer,
     pub authority: &'info Signer,
     pub token_program: &'info Interface<TokenInterface>,
@@ -533,7 +522,6 @@ pub struct CreateNft<'info> {
 | Attribute | Syntax | Default Error |
 |-----------|--------|---------------|
 | `mut` | `#[account(mut)]` | `Immutable` |
-| `signer` | `#[account(signer)]` | `MissingRequiredSignature` |
 | `dup` | `#[account(dup)]` | -- |
 | `address` | `#[account(address = EXPR)]` | `AddressMismatch` |
 | `has_one` | `#[account(has_one = field)]` | `HasOneMismatch` |
@@ -547,8 +535,8 @@ pub struct CreateNft<'info> {
 | `close` | `#[account(close = dest)]` | -- |
 | `realloc` | `#[account(realloc = EXPR)]` | `InvalidRealloc` |
 | `realloc::payer` | `#[account(realloc::payer = field)]` | -- |
-| `token::mint` | `#[account(token::mint = field)]` | `ConstraintViolation` |
-| `token::authority` | `#[account(token::authority = field)]` | `ConstraintViolation` |
+| `token::mint` | `#[account(init, token::mint = field)]` | -- |
+| `token::authority` | `#[account(init, token::authority = field)]` | -- |
 | `mint::decimals` | `#[account(mint::decimals = EXPR)]` | -- |
 | `mint::authority` | `#[account(mint::authority = field)]` | -- |
 | `mint::freeze_authority` | `#[account(mint::freeze_authority = field)]` | -- |

@@ -225,7 +225,7 @@ self.vault_ta_a
     .invoke_signed(&seeds)?;
 ```
 
-The `TokenClose` trait is implemented for `Account<Token>`, `Account<Mint>`, `Account<AssociatedToken>`, and their `InterfaceAccount` counterparts. The `.close()` method returns a `CpiCall`, so you choose between `.invoke()` (when the authority is a signer) and `.invoke_signed()` (when the authority is a PDA).
+`TokenClose` is implemented for `Account<Token>`, `Account<Token2022>`, `Account<Mint>`, `Account<Mint2022>`, `Account<AssociatedToken>`, and all their `InterfaceAccount` counterparts. The `.close()` method returns a `CpiCall`, so you choose between `.invoke()` (when the authority is a signer) and `.invoke_signed()` (when the authority is a PDA).
 
 ## PDA-signed transfers
 

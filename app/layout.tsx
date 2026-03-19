@@ -13,7 +13,7 @@ export const metadata: Metadata = {
 
 export default function Layout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className="dark" suppressHydrationWarning>
       <body
         style={{
           display: 'flex',
@@ -23,7 +23,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       >
         <RootProvider
           search={{ enabled: true }}
-          theme={{ defaultTheme: 'dark' }}
+          theme={{ defaultTheme: 'dark', forcedTheme: 'dark' }}
         >
           {children}
         </RootProvider>

@@ -3,7 +3,7 @@ title: Build an Escrow
 description: Step-by-step guide to building a token escrow program with Quasar.
 ---
 
-In this guide, we will build a token escrow program with Quasar. An escrow lets a maker deposit tokens of one mint and specify how many tokens of a different mint they want in return. A taker can fulfill the trade, or the maker can cancel and reclaim their tokens.
+This guide builds a token escrow program with Quasar. An escrow lets a maker deposit tokens of one mint and specify how many tokens of a different mint they want in return. A taker can fulfill the trade, or the maker can cancel and reclaim their tokens.
 
 By the end, you will understand how to:
 
@@ -37,6 +37,8 @@ debug = []
 [dependencies]
 quasar-lang = { version = "0.1.0" }
 quasar-spl = { version = "0.1.0" }
+solana-address = { version = "2.2.0" }
+solana-instruction = { version = "3.2.0" }
 ```
 
 The `quasar-spl` crate provides zero-copy account types for SPL tokens (`Mint`, `Token`) and type-safe CPI builders (`TokenCpi`, `TokenClose`).
@@ -57,7 +59,7 @@ src/
 
 ## Defining the escrow state
 
-Let\'s start with the escrow account in `state.rs`:
+The escrow account in `state.rs`:
 
 ```rust
 use quasar_lang::prelude::*;
@@ -73,7 +75,7 @@ pub struct Escrow {
 }
 ```
 
-The `#[account]` macro generates zero-copy serialization and deserialization for this struct. Let\'s break down each field:
+The `#[account]` macro generates zero-copy serialization and deserialization for this struct. Each field:
 
 - **`discriminator = 1`** -- A unique byte prepended to the account data that identifies this as an `Escrow` account. The framework validates this on deserialization. Account discriminators and instruction discriminators occupy separate namespaces.
 - **`maker`** -- The public key of the user who created the escrow.
@@ -436,6 +438,7 @@ mollusk-svm-programs-token = "0.10.3"
 spl-token-interface = { version = "2.0.0" }
 solana-program-pack = { version = "3.1.0" }
 solana-account = { version = "3.4.0" }
+solana-address = { version = "2.2.0", features = ["decode"] }
 solana-instruction = { version = "3.2.0", features = ["bincode"] }
 ```
 

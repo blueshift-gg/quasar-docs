@@ -116,7 +116,7 @@ pub struct Signer {
 ```rust
 #[derive(Accounts)]
 pub struct Initialize<'info> {
-    #[account(mut, signer)]
+    #[account(mut)]
     pub payer: &'info Signer,
     pub system_program: &'info Program<System>,
 }
@@ -206,7 +206,7 @@ pub struct Program<T: Id> {
 ```rust
 #[derive(Accounts)]
 pub struct CreateAccount<'info> {
-    #[account(mut, signer)]
+    #[account(mut)]
     pub payer: &'info Signer,
     pub system_program: &'info Program<System>,
 }

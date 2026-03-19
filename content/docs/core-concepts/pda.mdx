@@ -3,39 +3,26 @@ title: Program Derived Addresses
 description: Using PDAs for deterministic account addressing in Quasar — optimized derivation, seed expressions, bump capture, and PDA signing.
 ---
 
-Program Derived Addresses (PDAs) are deterministic addresses derived from a set of seeds and a program ID. They are the standard way to create accounts that "belong" to your program without requiring a private key. Quasar provides an optimized PDA implementation that reduces derivation cost from approximately 1,500 compute units to approximately 544 CU, and integrates PDA validation directly into the `#[derive(Accounts)]` macro.
+Quasar provides an optimized PDA implementation that reduces derivation cost from ~1,500 CU (standard SDK syscalls) to ~544 CU by calling `sol_sha256` and `sol_curve_validate_point` directly.
 
-## PDA Fundamentals
+## Implementation Details
 
-A PDA is a 32-byte address derived by hashing a set of seeds with a program ID and the string `"ProgramDerivedAddress"`. The resulting hash is checked to ensure it does not fall on the ed25519 curve (since PDAs must not have a corresponding private key). A "bump seed" is appended to the seed list and decremented from 255 downward until the hash produces an off-curve point.
-
-This means every PDA has:
-- **Seeds**: A set of byte arrays that uniquely identify the account (e.g., `[b"escrow", user_address]`).
-- **Bump**: A single byte (0-255) that makes the hash fall off the curve. The first valid bump (starting from 255) is the canonical bump.
-- **Address**: The resulting 32-byte address, deterministically computed from seeds + bump + program ID.
-
-PDAs are useful because:
-- They create predictable addresses -- any party can derive the same address given the same seeds.
-- They enable programs to "sign" for these addresses during CPI calls, without a private key.
-- They prevent address collisions between different seed combinations.
-
-## Quasar's Optimized Implementation
-
-The standard Solana SDK uses `sol_create_program_address` and `sol_try_find_program_address` syscalls, which cost approximately 1,500 CU per derivation. Quasar bypasses these syscalls and calls the lower-level primitives directly:
+The standard SDK uses `sol_create_program_address` and `sol_try_find_program_address` syscalls (~1,500 CU per derivation). Quasar calls `sol_sha256` and `sol_curve_validate_point` directly:
 
 1. **`sol_sha256`** -- hashes `[seeds..., bump, program_id, "ProgramDerivedAddress"]` in a single call.
-2. **`sol_curve_validate_point`** -- checks whether the hash is on the ed25519 curve.
+2. **`sol_curve_validate_point`** -- checks whether the hash is on the ed25519 curve (CURVE25519_EDWARDS = 0). Non-zero return means off-curve (valid PDA).
 
-This approach costs approximately 544 CU for a typical PDA (where bump 255 succeeds on the first try). The implementation also uses several micro-optimizations:
+Cost: ~544 CU when bump 255 succeeds on the first attempt.
 
-- **Stack-allocated seed array**: A `MaybeUninit<[&[u8]; 19]>` array holds up to 16 seeds + bump + program_id + PDA marker, avoiding heap allocation.
-- **Single-byte bump mutation**: Instead of rebuilding the seed array each iteration, only the bump byte is updated in a pre-allocated slot.
-- **u64 loop counter**: The bump counter uses `u64` instead of `u8` to avoid per-iteration zero-extension on the SBF architecture.
-- **Slice layout exploit**: On SBF, `&[u8]` has layout `(*const u8, u64)` which is identical to `SolBytes`, so the slice-of-slices can be passed directly to the syscall without intermediate copies.
+Micro-optimizations:
+- **Stack-allocated seed array**: `MaybeUninit<[&[u8]; 19]>` holds up to 16 seeds + bump + program_id + PDA marker.
+- **Single-byte bump mutation**: Only the bump byte is updated per iteration, not the entire seed array.
+- **u64 loop counter**: Avoids per-iteration zero-extension on SBF.
+- **Slice layout exploit**: On SBF, `&[u8]` has layout `(*const u8, u64)` = `SolBytes`, so the slice-of-slices passes directly to the syscall without copies.
 
-### Compile-Time PDA Derivation
+### Compile-Time Derivation
 
-For known-at-compile-time seeds (like the event authority PDA), Quasar provides `find_program_address_const`:
+For seeds known at compile time (e.g., the event authority PDA), `find_program_address_const` uses `const_crypto::ed25519::derive_program_address`:
 
 ```rust
 pub const fn find_program_address_const(
@@ -48,15 +35,13 @@ pub const fn find_program_address_const(
 }
 ```
 
-This is used internally by the `#[program]` macro to derive the `EventAuthority` PDA at compile time, incurring zero runtime cost.
+The `#[program]` macro uses this to derive `EventAuthority::ADDRESS` and `EventAuthority::BUMP` at compile time -- zero runtime cost.
 
 ## Seeds in Account Validation
 
-The most common way to use PDAs is through the `seeds` and `bump` attributes on `#[derive(Accounts)]` fields.
-
 ### Verifying an Existing PDA
 
-When you know the bump (e.g., stored in the account data), use `bump = expr` to verify the address matches:
+When the bump is stored in the account data, use `bump = expr` to verify the address:
 
 ```rust
 #[derive(Accounts)]
@@ -73,11 +58,11 @@ pub struct Take<'info> {
 }
 ```
 
-With `bump = escrow.bump`, the generated code calls `verify_program_address` which hashes the seeds once and compares the result against the account's address. This is the most efficient path -- a single SHA-256 hash.
+With `bump = escrow.bump`, the generated code calls `verify_program_address`: one SHA-256 hash, one comparison. This is the cheapest path.
 
 ### Discovering a Bump
 
-When initializing a new PDA account, use `bump` without a value to search for the canonical bump:
+When initializing a new PDA, use `bump` without a value to search for the canonical bump:
 
 ```rust
 #[derive(Accounts)]
@@ -88,7 +73,7 @@ pub struct Make<'info> {
 }
 ```
 
-The generated code calls `based_try_find_program_address` which iterates from bump 255 downward. In practice, most PDAs succeed on the first attempt (bump 255), costing approximately 544 CU.
+The generated code calls `based_try_find_program_address`, iterating from bump 255 downward. Most PDAs succeed on the first attempt (~544 CU). The discovered bump is stored in the `Bumps` struct.
 
 ### Seed Expressions
 
@@ -148,7 +133,7 @@ See [Cross-Program Invocations](./cpi) for the full CPI API.
 
 ## Storing Bumps
 
-It is common practice to store the bump seed in the account data so that future instructions can use `bump = account.bump` instead of re-deriving:
+Store the bump in the account data so future instructions use `bump = account.bump` (verify) instead of re-deriving (find):
 
 ```rust
 #[account(discriminator = 1)]
@@ -178,7 +163,7 @@ pub fn make_escrow(&mut self, receive: u64, bumps: &MakeBumps) -> Result<(), Pro
 }
 ```
 
-This is both a gas optimization (verify is cheaper than find) and a correctness pattern.
+Verify is cheaper than find (one hash vs. iterating), and storing the canonical bump prevents accidental use of non-canonical bumps.
 
 ## PDA Address Limits
 

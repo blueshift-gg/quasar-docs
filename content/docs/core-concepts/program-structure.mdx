@@ -3,7 +3,7 @@ title: Program Structure
 description: How a Quasar program is organized — the #[program] macro, module layout conventions, allocator configuration, and debug mode.
 ---
 
-Every Quasar program follows a consistent module layout. The `#[program]` macro ties it all together by generating the on-chain entrypoint, instruction dispatch table, event authority PDA, panic handler, and allocator configuration. This page covers each piece and how they interact.
+The `#[program]` macro generates the on-chain entrypoint, instruction dispatch table, event authority PDA, panic handler, and allocator configuration.
 
 ## Module Layout
 
@@ -23,7 +23,7 @@ my-program/
     events.rs           # #[event] definitions
 ```
 
-The `lib.rs` file is the central hub. It declares the program ID, imports the instruction handlers, and wraps them in the `#[program]` module. Here is the escrow example's `lib.rs`:
+The escrow example's `lib.rs`:
 
 ```rust
 #![no_std]
@@ -63,15 +63,11 @@ mod quasar_escrow {
 }
 ```
 
-Key observations:
-
 - **`#![no_std]`** is required. Quasar programs target the SVM runtime and do not link `std`.
 - **`declare_id!`** sets the `crate::ID` constant used for owner checks and PDA derivation.
-- **`#[program]`** annotates a module containing `#[instruction]` functions. The module name (`quasar_escrow`) determines the generated program type name (`QuasarEscrow`).
+- **`#[program]`** annotates a module containing `#[instruction]` functions. The module name (`quasar_escrow`) determines the generated program type name (`QuasarEscrow`). A `client` submodule with typed instruction builders is also generated inside the program module (compiled only for non-SVM targets).
 
 ## What `#[program]` Generates
-
-The `#[program]` macro performs substantial code generation. Understanding what it produces helps you debug and reason about your program's behavior.
 
 ### 1. Entrypoint
 
@@ -81,70 +77,63 @@ The macro generates an `entrypoint` function with the `#[unsafe(no_mangle)]` att
 #[unsafe(no_mangle)]
 #[cfg(target_os = "solana")]
 pub unsafe extern "C" fn entrypoint(ptr: *mut u8, instruction_data: *const u8) -> u64 {
-    // Initialize bump allocator (if alloc feature is enabled)
-    // Reconstruct instruction_data slice from SVM buffer layout
-    // Dispatch to __dispatch
+    // Initialize bump allocator cursor (if alloc feature is enabled)
+    // Reconstruct instruction_data slice: length is at offset -8 from the pointer
+    // Dispatch to __dispatch(ptr, instruction_data)
 }
 ```
 
-This function handles the raw SVM calling convention and forwards to the dispatch table.
+`ptr` points to the raw SVM input buffer containing all accounts. `instruction_data` points to the serialized instruction payload, with its `u64` length stored at offset `-8`.
 
 ### 2. Dispatch Table
 
-A `__dispatch` function routes instructions by matching on the discriminator prefix of the instruction data:
+`__dispatch` checks the first byte of instruction data. If it is `0xFF`, the call is routed to `__handle_event` (the self-CPI event handler) instead of the instruction dispatch table. Otherwise, the discriminator prefix is matched against a compile-time table of instruction handlers via the `dispatch!` macro.
 
-```rust
-fn __dispatch(ptr: *mut u8, instruction_data: &[u8]) -> Result<(), ProgramError> {
-    // Check for 0xFF prefix (reserved for events)
-    // Match discriminator bytes against instruction handlers
-}
-```
-
-The discriminator byte `0xFF` is reserved for the event self-CPI protocol. If instruction data starts with `0xFF`, it is routed to the event handler instead of the instruction dispatch table. This means your instruction discriminators must never start with `0xFF` -- the macro enforces this at compile time.
-
-All instruction discriminators within a program must have the same byte length. Duplicate discriminators are also caught at compile time.
+Constraints enforced at compile time:
+- All instruction discriminators must have the same byte length.
+- No duplicates.
+- No discriminator may start with `0xFF` (reserved for events).
 
 ### 3. Program Type and Event Authority
 
-Outside the module, the macro generates a named program type derived from the module name (e.g., `quasar_escrow` becomes `QuasarEscrow`):
+Outside the module, the macro generates:
 
 ```rust
-// Generated program type with Executable + Address checks
-pub struct QuasarEscrow { /* ... */ }
+// #[repr(transparent)] wrapper over AccountView, validates Executable + Address
+pub struct QuasarEscrow { /* view: AccountView */ }
 
-// Event authority PDA, derived at compile time
-pub struct EventAuthority { /* ... */ }
+impl Id for QuasarEscrow {
+    const ID: Address = crate::ID;
+}
+
+// Event authority PDA, computed at compile time (zero runtime cost)
+pub struct EventAuthority { /* view: AccountView */ }
 
 impl EventAuthority {
-    pub const ADDRESS: Address = /* PDA from seeds ["__event_authority"] */;
-    pub const BUMP: u8 = /* bump */;
+    const __PDA: (Address, u8) = find_program_address_const(&[b"__event_authority"], &crate::ID);
+    pub const ADDRESS: Address = Self::__PDA.0;
+    pub const BUMP: u8 = Self::__PDA.1;
 }
 ```
 
-The `EventAuthority` PDA is computed at compile time using `find_program_address_const`. It is used for self-CPI event emission (see [CPI](./cpi) for details). The program type also gets an `emit_event` method for emitting events through CPI.
+The program type gets an `emit_event` method that takes an `&impl Event` and an `&EventAuthority`, invoking self-CPI with the event data signed by the `EventAuthority` PDA.
 
-### 4. Client Module
+### 4. Panic Handler
 
-A `client` module is generated inside the program module, compiled only for non-SVM targets (`#[cfg(not(target_os = "solana"))]`). It provides typed instruction builders for each instruction, which are used in tests and off-chain clients.
-
-### 5. Panic Handler
-
-The macro generates a minimal panic handler that logs `"PANIC"` and enters an infinite loop. This is the standard pattern for `no_std` SVM programs.
+The macro generates a minimal panic handler (`#[panic_handler]`) that calls `log("PANIC")` and enters an infinite loop. This is gated behind `#[cfg(any(target_os = "solana", target_arch = "bpf"))]`.
 
 ## Allocator Configuration
 
-Quasar programs default to **no allocator**. The `no_alloc!()` macro installs a global allocator that panics on any allocation attempt. This is intentional: Quasar's zero-copy design means most programs never need heap allocation.
+By default, the `#[program]` macro emits `no_alloc!()`, which installs a global allocator that panics on any allocation attempt. Quasar's zero-copy design means most programs never need heap allocation.
 
-If your program requires heap allocation (e.g., for `alloc::vec::Vec` or `alloc::string::String`), enable the `alloc` feature flag in your `Cargo.toml`:
+If your program requires heap allocation (e.g., for `alloc::vec::Vec` or `alloc::string::String`), enable the `alloc` feature flag:
 
 ```toml
 [dependencies]
 quasar-lang = { version = "...", features = ["alloc"] }
 ```
 
-When `alloc` is enabled, the `#[program]` macro uses `heap_alloc!()` instead, which installs a bump allocator with a 256 KiB heap region. The bump allocator is extremely fast (no free-list overhead), but memory is never reclaimed within a single instruction execution.
-
-The entrypoint initializes the heap cursor before any allocation can occur:
+With `alloc` enabled, the macro emits `heap_alloc!()` instead, installing a bump allocator. The entrypoint initializes the heap cursor before any allocation can occur:
 
 ```rust
 #[cfg(feature = "alloc")]
@@ -153,6 +142,8 @@ The entrypoint initializes the heap cursor before any allocation can occur:
     *(heap_start as *mut usize) = heap_start + core::mem::size_of::<usize>();
 }
 ```
+
+Memory is never reclaimed within a single instruction execution.
 
 ## Debug Mode
 
@@ -172,25 +163,25 @@ Without debug mode, these log statements are compiled out entirely, saving compu
 
 ## The `#![no_std]` Requirement
 
-Quasar programs are `#![no_std]` by design. The `prelude::*` import provides everything you need:
+Quasar programs are `#![no_std]` by design. The `prelude::*` import provides:
 
 - `ProgramError`, `Address`, `AccountView` -- core Solana types
+- `address!`, `declare_id!` -- address construction macros
 - `Ctx`, `CtxWithRemaining`, `Context` -- instruction context types
 - `Account`, `Signer`, `UncheckedAccount`, `SystemAccount`, `Program`, `Interface`, `Sysvar` -- account wrappers
-- `System` -- system program marker type
-- `Rent` -- sysvar access
-- `ParseAccounts`, `AccountCount`, `AsAccountView` -- framework traits
-- `emit!`, `require!`, `require_eq!` -- utility macros
+- `System`, `SYSTEM_PROGRAM_ID` -- system program marker type and address
+- `Rent`, `Clock` -- sysvar types
+- `String`, `Vec`, `RawEncoded` -- dynamic field marker types
+- `PodU64`, `PodU32`, `PodU16`, `PodI64`, etc. -- alignment-1 integer types
+- `ParseAccounts`, `AccountCount`, `AsAccountView`, `Discriminator`, `Owner`, `Space`, `Id`, `Event` -- framework traits
+- `Deref`, `DerefMut` -- re-exported from `core::ops`
+- `emit!`, `require!`, `require_eq!`, `require_keys_eq!` -- utility macros
 - `log` -- logging function
-- `set_lamports` -- direct lamport mutation
+- `Seed` -- CPI seed type
 
 ## Instruction Handler Pattern
 
-Each instruction handler follows a consistent pattern:
-
-1. Accept `ctx: Ctx<AccountsStruct>` as the first parameter, plus any additional typed arguments
-2. Delegate business logic to methods on the accounts struct
-3. Return `Result<(), ProgramError>`
+Each handler accepts `ctx: Ctx<T>` (or `ctx: CtxWithRemaining<T>`) as its first parameter, plus any additional typed arguments, and returns `Result<(), ProgramError>`. Business logic goes in `impl` blocks on the accounts struct:
 
 ```rust
 #[instruction(discriminator = 0)]
@@ -199,9 +190,7 @@ pub fn deposit(ctx: Ctx<Deposit>, amount: u64) -> Result<(), ProgramError> {
 }
 ```
 
-This pattern keeps the `#[program]` module slim and pushes logic into the `impl` blocks of each accounts struct, which live in the `instructions/` directory.
-
-For instructions that need access to remaining accounts (e.g., for forwarding to CPIs with a variable number of signers), use `CtxWithRemaining` instead:
+For instructions that forward a variable number of accounts to CPIs, use `CtxWithRemaining`:
 
 ```rust
 #[instruction(discriminator = 0)]

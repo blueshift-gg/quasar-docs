@@ -3,17 +3,13 @@ title: Migrating from Anchor
 description: Step-by-step guide to migrate an existing Anchor program to Quasar.
 ---
 
-If you have built Solana programs with Anchor, you already know most of what Quasar does. The two frameworks share the same mental model -- derive macros for accounts, typed contexts for instructions, and constraint-based validation. The differences are in the runtime: Quasar is zero-copy and `no_std`, which means no deserialization, no heap allocation, and significantly lower compute unit costs.
-
-This guide maps every Anchor concept to its Quasar equivalent with side-by-side code.
+Quasar shares Anchor's mental model -- derive macros for accounts, typed contexts for instructions, constraint-based validation. The differences are in the runtime: Quasar is zero-copy and `no_std`, which means no deserialization, no heap allocation, and lower compute unit costs.
 
 ## What stays the same
 
-A lot. If you are productive with Anchor, you will be productive with Quasar immediately:
-
-- **`#[derive(Accounts)]`** works the same way. You define a struct with typed account fields and attribute constraints.
-- **Account constraints** like `seeds`, `bump`, `has_one`, `constraint`, `init`, `init_if_needed`, `payer`, `close`, `mut`, and `address` all exist in Quasar with the same syntax.
-- **Error codes** start at 6000 by convention and use `#[error_code]` with `#[msg("...")]` annotations.
+- **`#[derive(Accounts)]`** works the same way. Struct with typed account fields and attribute constraints.
+- **Account constraints** -- `seeds`, `bump`, `has_one`, `constraint`, `init`, `init_if_needed`, `payer`, `close`, and `address` all exist with the same syntax.
+- **Error codes** use `#[error_code]` with `#[msg("...")]` annotations. Variants auto-increment from 0 by default; set `= 6000` on the first variant for Anchor-compatible numbering.
 - **`require!`, `require_eq!`, `require_keys_eq!`** macros work identically.
 - **PDA derivation** uses the same `seeds` and `bump` system. Bumps are accessible via a generated `Bumps` companion struct.
 - **Project layout** follows the same convention: `lib.rs` as entrypoint, `instructions/` directory, `state.rs` for accounts, `events.rs` for events.
@@ -54,13 +50,13 @@ mod my_program {
 }
 ```
 
-Three differences to note:
+Three differences:
 
-1. **Explicit discriminators.** Every instruction has `#[instruction(discriminator = N)]` with a developer-specified value. Anchor uses SHA-256 hashes; Quasar uses explicit integers. This makes the dispatch table smaller and the discriminator cheaper to match (a single integer comparison instead of an 8-byte memcmp). Discriminators must be non-zero and unique within a program.
+1. **Explicit discriminators.** Every instruction has `#[instruction(discriminator = N)]` with a developer-specified value (single integer or byte array like `[1, 0, 0, 0]`). Anchor uses SHA-256 hashes; Quasar uses explicit bytes. Discriminators must be unique within a program. Instruction discriminators may be zero; account discriminators may not (all-zero is rejected at compile time to prevent uninitialized data from passing validation).
 
-2. **`Ctx<T>` instead of `Context<T>`.** Functionally the same -- it holds your parsed accounts, bumps, and program ID. Quasar also provides `CtxWithRemaining<T>` for instructions that need access to [remaining accounts](/docs/features/remaining-accounts).
+2. **`Ctx<T>` instead of `Context<T>`.** Holds your parsed accounts, bumps, and program ID. `CtxWithRemaining<T>` provides access to [remaining accounts](/docs/features/remaining-accounts).
 
-3. **`Result<(), ProgramError>` instead of `Result<()>`.** Quasar does not wrap `ProgramError` in its own result type. You return Solana's native `ProgramError` directly.
+3. **`Result<(), ProgramError>` instead of `Result<()>`.** Quasar returns Solana's native `ProgramError` directly, no wrapper type.
 
 ## Account types
 
@@ -88,12 +84,12 @@ pub struct Escrow {
 }
 ```
 
-Key differences:
+Differences:
 
-- **Explicit discriminator.** Like instructions, account types require an explicit `discriminator` value. All-zero discriminators are rejected at compile time to prevent uninitialized data from passing validation.
-- **`Address` instead of `Pubkey`.** Quasar uses Solana's `Address` type, which is alignment-1 (a transparent wrapper around `[u8; 32]`). Anchor's `Pubkey` has alignment 4, which is incompatible with zero-copy access on unaligned account data. This is a central design decision -- it means field access requires no copying or padding.
-- **Zero-copy companion struct.** The `#[account]` macro generates a `#[repr(C)]` companion type (prefixed `Zc`) with Pod fields. When you access an `Account<Escrow>`, the data is read directly from account memory through pointer casts. There is no Borsh deserialization step.
-- **`set_inner()` instead of field assignment.** To write to an account, you call the generated `set_inner()` method which writes all fields at once via the zero-copy companion:
+- **Explicit discriminator.** Account types require `discriminator = N` where at least one byte is non-zero. All-zero discriminators are rejected at compile time.
+- **`Address` instead of `Pubkey`.** `Address` is alignment-1 (`[u8; 32]`). `Pubkey` has alignment 4, incompatible with zero-copy access on unaligned account data. Field access requires no copying or padding.
+- **Zero-copy companion struct.** `#[account]` generates a `#[repr(C)]` companion type (prefixed `Zc`) with Pod fields. `Account<Escrow>` reads data directly from account memory through pointer casts -- no Borsh deserialization.
+- **`set_inner()` instead of field assignment.** Writes all fields at once via the zero-copy companion:
 
 ```rust
 self.escrow.set_inner(
@@ -147,7 +143,7 @@ pub struct Take<'info> {
 }
 ```
 
-The constraint syntax is nearly identical. The structural differences are:
+Structural differences:
 
 | Anchor | Quasar | Why |
 |---|---|---|
@@ -158,7 +154,7 @@ The constraint syntax is nearly identical. The structural differences are:
 
 ### Business logic placement
 
-In Anchor, instruction logic typically lives in the `#[program]` function body. In Quasar, the convention is to implement methods on the accounts struct:
+In Anchor, instruction logic lives in the `#[program]` function body. In Quasar, implement methods on the accounts struct:
 
 ```rust
 impl<'info> Take<'info> {
@@ -180,8 +176,6 @@ pub fn take(ctx: Ctx<Take>) -> Result<(), ProgramError> {
     ctx.accounts.withdraw_tokens_and_close(&ctx.bumps)
 }
 ```
-
-This keeps each instruction's logic self-contained and testable.
 
 ## CPI: Cross-program invocation
 
@@ -205,9 +199,9 @@ self.token_program
     .invoke_signed(&seeds)?;
 ```
 
-Quasar's CPI system uses `CpiCall<ACCTS, DATA>`, a const-generic struct where the number of accounts and data size are known at compile time. Everything stays on the stack -- no heap allocation, no `Vec`, no `AccountInfo` cloning.
+Quasar's CPI system uses `CpiCall<'a, ACCTS, DATA>`, a const-generic struct where the number of accounts and data size are known at compile time. Everything stays on the stack -- no heap allocation, no `Vec`, no `AccountInfo` cloning.
 
-For system program CPIs like transfers, the pattern is the same:
+System program CPIs follow the same pattern:
 
 ```rust
 self.system_program
@@ -219,7 +213,7 @@ Signed invocation (PDA seeds) uses `.invoke_signed(&seeds)` instead of wrapping 
 
 ### PDA seeds for CPI
 
-In Anchor, you construct seed slices manually. In Quasar, the `#[derive(Accounts)]` macro generates a `Bumps` struct with a `*_seeds()` helper method for each PDA:
+`#[derive(Accounts)]` generates a `Bumps` struct with a `*_seeds()` helper for each PDA:
 
 ```rust
 pub fn withdraw(&mut self, bumps: &TakeBumps) -> Result<(), ProgramError> {
@@ -266,9 +260,7 @@ emit!(MakeEvent {
 });
 ```
 
-Quasar events require an explicit discriminator, just like accounts and instructions. The `emit!()` macro emits via `sol_log_data` at roughly 100 CU.
-
-For spoofing-resistant events, Quasar also supports `emit_cpi!()` which emits via a self-CPI to a `__event_authority` PDA. This costs approximately 1,000 CU but proves the event was emitted by your program (the program ID appears in the transaction trace). Supported field types for events are `Address`, `u8`--`u128`, `i8`--`i128`, and `bool`.
+Events require an explicit discriminator. `emit!()` emits via `sol_log_data` (~100 CU). `emit_cpi!()` emits via self-CPI to an `__event_authority` PDA (~1,000 CU), proving the event was emitted by your program. Supported field types: `Address`, `u8`--`u128`, `i8`--`i128`, `bool`.
 
 ## Error codes
 
@@ -296,7 +288,19 @@ pub enum MyError {
 require!(amount > 0, MyError::InsufficientFunds);
 ```
 
-This is identical. Error variants start at 6000 by default, matching the Anchor convention. You can also specify explicit starting values:
+Syntax is identical. However, Quasar's `#[error_code]` starts variant numbering at 0 by default, not 6000. To match Anchor's convention, set `= 6000` on the first variant explicitly:
+
+```rust
+#[error_code]
+pub enum MyError {
+    #[msg("Insufficient funds")]
+    InsufficientFunds = 6000,  // explicit start
+    #[msg("Invalid state")]
+    InvalidState,              // = 6001
+}
+```
+
+Any variant can reset the counter with an explicit discriminant:
 
 ```rust
 #[error_code]
@@ -308,15 +312,13 @@ pub enum MyError {
 }
 ```
 
-Quasar also defines framework-level errors in `QuasarError` (starting at 3000) for common validation failures like `AccountNotInitialized`, `InvalidPda`, `ConstraintViolation`, and `HasOneMismatch`.
+Quasar defines framework-level errors in `QuasarError` (starting at 3000) for validation failures: `AccountNotInitialized`, `InvalidPda`, `ConstraintViolation`, `HasOneMismatch`, `InvalidDiscriminator`, `AddressMismatch`, etc.
 
 ## `Pubkey` vs `Address`
 
-This is the single most pervasive change when migrating. Anchor uses `Pubkey` (alignment 4, 32 bytes). Quasar uses `Address` (alignment 1, 32 bytes).
+The most pervasive change. Anchor uses `Pubkey` (alignment 4, 32 bytes). Quasar uses `Address` (alignment 1, 32 bytes).
 
-Why: Solana account data is not guaranteed to be aligned. Anchor works around this by copying account data into aligned buffers (deserialization). Quasar accesses account data in place (zero-copy), so every field must be alignment-1 to avoid undefined behavior from unaligned reads.
-
-In practice, you replace `Pubkey` with `Address` everywhere:
+Solana account data is not guaranteed to be aligned. Anchor copies account data into aligned buffers (deserialization). Quasar accesses data in place (zero-copy), so every field must be alignment-1 to avoid undefined behavior from unaligned reads.
 
 | Anchor | Quasar |
 |---|---|
@@ -324,54 +326,46 @@ In practice, you replace `Pubkey` with `Address` everywhere:
 | `Pubkey::new_unique()` | `Address::new_unique()` (tests only) |
 | `system_program::ID` | `SYSTEM_PROGRAM_ID` |
 
-The `Address` type supports the same base58 encoding/decoding and comparison operations you are used to. Quasar provides `keys_eq()` for optimized 32-byte comparisons using unaligned u64 word reads.
+`Address` supports base58 encoding/decoding and comparison. `keys_eq()` provides optimized 32-byte comparison via four unaligned `u64` word reads with short-circuit on first mismatch.
 
 ## `no_std` by default
 
 Anchor programs implicitly use `std`. Quasar programs are `#![no_std]` on-chain (with `std` available during tests via `#![cfg_attr(not(test), no_std)]`).
 
-This means:
+- No `String`, `Vec`, or `HashMap` from `std`. Quasar provides `String<P, N>` and `Vec<T, P, N>` for dynamic account fields, where `P` is the length-prefix type and `N` is the max capacity.
+- No `println!()` on-chain. Use `log()` (re-exported from `solana_program_log` in the prelude).
+- No `format!()`. Enable the `debug` feature for verbose error messages that include account names and constraint indices.
 
-- No `String`, `Vec`, or `HashMap` from `std`. Use Quasar's Pod types and fixed-size arrays for on-chain data. Quasar provides its own `String<P, N>` and `Vec<T, P, N>` for dynamic account fields.
-- No `println!()` on-chain. Use `solana_program_log::log()` (re-exported as `log` in the prelude) for on-chain logging.
-- No `format!()`. For debug builds, enable the `debug` feature to get verbose error messages.
-
-The payoff is that the compiled program contains no allocator, no panic formatting machinery, and no unused standard library code.
+The compiled program contains no allocator, no panic formatting machinery, and no unused standard library code.
 
 ## Pod types
 
-For numeric fields, Quasar provides alignment-1 Pod types that can be used in `#[repr(C)]` zero-copy structs:
+Alignment-1 wrappers for numeric types, used in the generated `#[repr(C)]` zero-copy companion structs:
 
-| Standard type | Quasar Pod type |
+| Standard type | Pod type |
 |---|---|
-| `u16` | `PodU16` |
-| `u32` | `PodU32` |
-| `u64` | `PodU64` |
-| `u128` | `PodU128` |
-| `i16` | `PodI16` |
-| `i32` | `PodI32` |
-| `i64` | `PodI64` |
-| `i128` | `PodI128` |
+| `u16` / `i16` | `PodU16` / `PodI16` |
+| `u32` / `i32` | `PodU32` / `PodI32` |
+| `u64` / `i64` | `PodU64` / `PodI64` |
+| `u128` / `i128` | `PodU128` / `PodI128` |
 | `bool` | `PodBool` |
 
-In `#[account]` structs, you use standard Rust types (`u64`, `bool`, etc.) and the macro handles the conversion to Pod types in the generated zero-copy companion. You only need Pod types when working with the zero-copy layer directly.
+In `#[account]` structs, use standard Rust types (`u64`, `bool`, etc.) -- the macro converts them to Pod types in the generated companion. You only need Pod types when working with the zero-copy layer directly. `u8`, `i8`, and `bool` are already alignment-1 and do not need Pod wrappers.
 
 ## Migration checklist
 
-Here is a step-by-step process for converting an Anchor program:
-
-1. **Create a new Quasar project** with `quasar init` and copy your `instructions/`, `state.rs`, and `events.rs` files over.
-2. **Replace imports:** `anchor_lang::prelude::*` becomes `quasar_lang::prelude::*`.
-3. **Replace `Pubkey` with `Address`** everywhere. Replace `.key()` with `*account.address()`.
-4. **Add explicit discriminators** to all `#[account]`, `#[instruction]`, and `#[event]` attributes.
-5. **Convert account field types** from owned values to references: `Signer<'info>` becomes `&'info Signer`, `Account<'info, T>` becomes `&'info Account<T>`.
-6. **Remove `#[account(mut)]` attributes** and use `&'info mut` references instead.
-7. **Update PDA seeds** to pass field names directly instead of `.key().as_ref()`.
-8. **Convert CPI calls** from `CpiContext` to method-style calls (`.transfer()`, `.mint_to()`, etc.) followed by `.invoke()` or `.invoke_signed()`.
-9. **Update events** to use explicit discriminators and `Address` fields.
-10. **Update error types** -- these should work as-is if you were already using `#[error_code]`.
-11. **Add `#![cfg_attr(not(test), no_std)]`** to `lib.rs` and remove any `std` dependencies from on-chain code.
-12. **Build and fix** with `quasar build`. The compiler will catch remaining type mismatches.
+1. **Create a new Quasar project** with `quasar init` and copy your `instructions/`, `state.rs`, and `events.rs` files.
+2. **Replace imports:** `anchor_lang::prelude::*` -> `quasar_lang::prelude::*`.
+3. **Replace `Pubkey` with `Address`** everywhere. `.key()` -> `*account.address()`.
+4. **Add explicit discriminators** to `#[account]`, `#[instruction]`, and `#[event]`. Account discriminators must have at least one non-zero byte.
+5. **Convert field types** to references: `Signer<'info>` -> `&'info Signer`, `Account<'info, T>` -> `&'info Account<T>`.
+6. **Remove `#[account(mut)]`** -- use `&'info mut` references instead.
+7. **Update PDA seeds** -- pass field names directly instead of `.key().as_ref()`.
+8. **Convert CPI calls** from `CpiContext` to method-style (`.transfer()`, `.mint_to()`) followed by `.invoke()` or `.invoke_signed()`.
+9. **Update events** -- add explicit discriminators, replace `Pubkey` fields with `Address`.
+10. **Update error codes** -- if you want Anchor-compatible numbering, add `= 6000` to the first variant.
+11. **Add `#![cfg_attr(not(test), no_std)]`** to `lib.rs` and remove `std` dependencies from on-chain code.
+12. **Build and fix** with `quasar build`. The compiler catches remaining type mismatches.
 
 ## Further reading
 

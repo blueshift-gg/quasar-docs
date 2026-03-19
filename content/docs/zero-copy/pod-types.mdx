@@ -3,13 +3,13 @@ title: Pod Types
 description: Plain-old-data types that can be safely cast from raw byte buffers without alignment concerns.
 ---
 
-Solana programs receive account data as raw byte buffers. These buffers have **alignment 1** -- they are contiguous sequences of bytes with no alignment guarantees beyond that. If you try to cast such a buffer to a struct containing a `u64` (which requires alignment 8), you get undefined behavior, even if the data is never read through the misaligned reference.
+Solana programs receive account data as raw byte buffers with **alignment 1**. Casting such a buffer to a struct containing a `u64` (alignment 8) is undefined behavior, even if the pointer happens to be aligned at runtime and the data is never read through the misaligned reference.
 
 Quasar solves this with **Pod types**: alignment-1 wrappers around native integers that can be safely cast from any byte boundary.
 
 ## Why alignment matters on the SVM
 
-When a Solana program is invoked, the runtime serializes all account data into a single input buffer. This buffer is a flat `&[u8]` -- every byte sits at alignment 1. Native Rust integers have higher alignment requirements:
+The SVM runtime serializes all account data into a single input buffer -- a flat `&[u8]` at alignment 1. Native Rust integers have higher alignment requirements:
 
 | Type | Size | Required alignment |
 |------|------|--------------------|
@@ -127,7 +127,7 @@ The full set of checked methods:
 | `checked_mul(rhs)` | `Option<Self>` -- `None` on overflow |
 | `checked_div(rhs)` | `Option<Self>` -- `None` if divisor is zero |
 
-Saturating variants are also available for cases where clamping at the numeric bounds is the correct behavior:
+Saturating variants (`saturating_add`, `saturating_sub`, `saturating_mul`) clamp at the numeric bounds instead of overflowing:
 
 ```rust
 let max = PodU64::from(u64::MAX);
