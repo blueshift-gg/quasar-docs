@@ -39,7 +39,7 @@ Valid values:
 | Value | Description |
 |-------|-------------|
 | `"solana"` | Uses `cargo build-sbf` from the Solana SDK. The standard, stable toolchain. |
-| `"upstream"` | Uses `cargo +nightly build-bpf` from the upstream (Anza) SDK. Required for the latest SVM features. |
+| `"upstream"` | Uses `cargo build-bpf` (alias for `cargo build --release --target bpfel-unknown-none`) with `sbpf-linker` from [blueshift-gg/sbpf-linker](https://github.com/blueshift-gg/sbpf-linker). Produces smaller binaries and gives access to nightly Rust features. Requires `sbpf-linker` on PATH (install via `cargo install-with-gallery`). |
 
 ### `[testing]`
 

@@ -3,9 +3,7 @@ title: Dynamic Fields
 description: Working with variable-length data like strings and vectors in zero-copy accounts.
 ---
 
-Fixed-size accounts are straightforward: the `#[account]` macro generates a `#[repr(C)]` companion struct, and every field access is a pointer dereference at a known offset. But many programs need variable-length data -- a user's display name, a list of signers, or a configurable set of parameters.
-
-Quasar supports dynamic fields through **marker types** that the `#[account]` macro recognizes and expands into length-prefixed wire formats. The key constraint: dynamic fields must come **after** all fixed fields.
+Fixed-size accounts map to a `#[repr(C)]` companion struct where every field access is a pointer dereference at a known offset. Dynamic fields -- variable-length strings and arrays -- use **marker types** that the `#[account]` macro expands into length-prefixed wire formats. Dynamic fields must come **after** all fixed fields.
 
 ## The marker types
 
@@ -18,13 +16,18 @@ A variable-length UTF-8 string stored inline in the account data.
 - `P` -- length prefix type (`u8`, `u16`, or `u32`). Determines how the byte length is encoded. Default: `u32`.
 - `N` -- maximum byte length. Validated at write time. Default: `1024`.
 
+The macro accepts multiple syntaxes:
+
 ```rust
-pub name: String,                // u32 prefix, max 1024 bytes
-pub bio: String<u16, 4096>,      // u16 prefix, max 4096 bytes
-pub tag: String<u8, 32>,         // u8 prefix, max 32 bytes
+pub name: String,                // u32 prefix, max 1024 bytes (all defaults)
+pub bio: String<u16, 4096>,      // u16 prefix, max 4096 bytes (explicit prefix)
+pub tag: String<u8, 32>,         // u8 prefix, max 32 bytes (explicit prefix)
+pub label: String<'a, 32>,       // u32 prefix, max 32 bytes (lifetime first, prefix defaults to u32)
 ```
 
-The wire format is: `[prefix: P bytes] [utf-8 data: len bytes]`
+The `String<'a, N>` syntax places the struct's lifetime first and defaults the prefix to `u32`. This is the common form inside `#[account]` structs with dynamic fields.
+
+Wire format: `[prefix: P bytes] [utf-8 data: len bytes]`
 
 The prefix encodes the **byte length** of the string data (not the character count).
 
@@ -36,13 +39,16 @@ A variable-length array of fixed-size elements stored inline in the account data
 - `P` -- count prefix type (`u8`, `u16`, or `u32`). Determines how the element count is encoded. Default: `u32`.
 - `N` -- maximum element count. Validated at write time. Default: `8`.
 
+Similarly to `String`, the macro accepts a lifetime-first syntax:
+
 ```rust
-pub signers: Vec<Address>,           // u32 prefix, max 8 elements
-pub scores: Vec<PodU64, u8, 4>,      // u8 prefix, max 4 elements
-pub tags: Vec<Address, u16, 100>,    // u16 prefix, max 100 elements
+pub signers: Vec<Address>,           // u32 prefix, max 8 elements (all defaults)
+pub scores: Vec<PodU64, u8, 4>,      // u8 prefix, max 4 elements (explicit prefix)
+pub tags: Vec<Address, u16, 100>,    // u16 prefix, max 100 elements (explicit prefix)
+pub signers: Vec<'a, Address, 10>,   // u32 prefix, max 10 elements (lifetime first)
 ```
 
-The wire format is: `[prefix: P bytes] [elements: count * size_of::<T>() bytes]`
+Wire format: `[prefix: P bytes] [elements: count * size_of::<T>() bytes]`
 
 The prefix encodes the **element count** (not the byte length). Elements are packed contiguously after the prefix with no padding.
 
@@ -294,9 +300,9 @@ Dynamic account validation is more thorough than fixed accounts. The generated `
 1. The prefix bytes are within bounds.
 2. The decoded length/count does not exceed the field's maximum.
 3. The data region (prefix + data) is within bounds.
-4. For string fields: the data is valid UTF-8 (on non-SBF targets; skipped on-chain for CU efficiency).
+4. For string fields: the data is valid UTF-8.
 
-This validation runs once during `from_account_view()`. After passing, all subsequent field accesses are safe -- they use the validated offsets without re-checking bounds.
+This validation runs once during `from_account_view()`, which calls `AccountCheck::check()` then caches byte offsets in a `__parse()` step. After passing, all subsequent field accesses are safe -- they use the validated offsets without re-checking bounds. The string accessors use `from_utf8_unchecked` on SBF since the check already validated the data.
 
 ## Tail fields
 
@@ -311,8 +317,5 @@ pub struct Note<'a> {
 ```
 
 Restrictions:
-- At most one tail field per struct.
-- The tail field must be the **last** field.
-- Tail fields cannot coexist in the middle of other dynamic fields.
-
-Tail fields are useful for variable-length data where you do not need a length prefix (e.g., a memo or note field that fills the rest of the account).
+- At most one tail field per struct (`at most one tail field (&str / &[u8]) is allowed per struct`).
+- The tail field must be the **last** field in the struct (`tail field (&str / &[u8]) must be the last field in the struct`).

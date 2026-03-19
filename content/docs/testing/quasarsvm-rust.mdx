@@ -3,7 +3,7 @@ title: QuasarSVM (Rust)
 description: Testing Quasar programs with the Rust-based QuasarSVM test harness.
 ---
 
-QuasarSVM is a lightweight Solana VM harness built for Quasar. It lets you deploy programs, send transactions, inspect account state, and check compute unit usage -- all from Rust, without starting a validator.
+QuasarSVM is a lightweight Solana VM harness built for Quasar. It supports deploying programs, sending transactions, inspecting account state, and checking compute unit usage -- all from Rust, without starting a validator.
 
 ## Setup
 
@@ -18,7 +18,7 @@ solana-instruction = { version = "3.2.0", features = ["bincode"] }
 solana-pubkey = { version = "4.1.0" }
 ```
 
-Or run `quasar init` and select **QuasarSVM/Rust** when prompted for a testing framework. The scaffolder sets up everything automatically.
+Or run `quasar init` and select **QuasarSVM/Rust** when prompted for a testing framework.
 
 Your `lib.rs` should include the test module:
 
@@ -27,7 +27,7 @@ Your `lib.rs` should include the test module:
 mod tests;
 ```
 
-## Deploying Programs
+## Deploying programs
 
 Create a `QuasarSvm` instance and load your compiled `.so` binary:
 
@@ -44,7 +44,7 @@ fn setup() -> QuasarSvm {
 
 `include_bytes!` embeds the program binary at compile time. Make sure to run `quasar build` before running tests so the `.so` file exists.
 
-## Sending Transactions
+## Sending transactions
 
 Build instructions using the auto-generated client types, then call `process_transaction`:
 
@@ -78,9 +78,9 @@ fn test_initialize() {
 
 The second argument to `process_transaction` is a slice of `(Pubkey, Account)` tuples that seed the VM with initial account state. Accounts not listed here default to empty system-owned accounts.
 
-## Account State Inspection
+## Account state inspection
 
-After processing a transaction, the result contains the modified account state. You can inspect lamports, data, and owner:
+After processing a transaction, the result contains the modified account state:
 
 ```rust
 let user_after = result.resulting_accounts[0].1.lamports;
@@ -92,9 +92,9 @@ assert_eq!(vault_after, deposit_amount);
 
 Accounts in `resulting_accounts` are ordered the same way they were passed in the instruction's account list.
 
-## Multi-Step Transactions
+## Multi-step transactions
 
-Chain multiple instructions by feeding the resulting accounts from one transaction into the next:
+Chain multiple instructions by feeding resulting accounts from one transaction into the next:
 
 ```rust
 // Step 1: Deposit
@@ -115,9 +115,9 @@ let withdraw_result = svm.process_transaction(
 assert!(matches!(withdraw_result.status(), ExecutionStatus::Success));
 ```
 
-## Compute Budget Testing
+## Compute budget testing
 
-The transaction result includes the compute units consumed, so you can assert that your instruction stays within budget or track CU regressions:
+The transaction result includes the compute units consumed, so you can assert budget limits or track CU regressions:
 
 ```rust
 let result = svm.process_transaction(&[instruction], &accounts);
@@ -126,9 +126,9 @@ println!("CU consumed: {}", result.compute_units_consumed);
 assert!(result.compute_units_consumed < 5_000, "CU budget exceeded");
 ```
 
-## Full Example: Vault Program
+## Full example: Vault program
 
-This is a complete test file for the [vault example program](/docs/getting-started/quick-start), testing both deposit and withdraw flows:
+A complete test file for the [vault example program](/docs/getting-started/quick-start), testing both deposit and withdraw flows:
 
 ```rust
 extern crate std;
@@ -224,13 +224,13 @@ fn test_withdraw() {
 }
 ```
 
-## Running Tests
+## Running tests
 
 ```bash
 quasar test
 ```
 
-This builds the program, generates the client, and runs `cargo test`. You can also filter by test name:
+This builds the program, generates the client, and runs `cargo test`. Filter by test name:
 
 ```bash
 quasar test --filter deposit

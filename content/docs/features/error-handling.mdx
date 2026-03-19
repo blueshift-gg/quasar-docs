@@ -195,7 +195,7 @@ require_eq!(
 
 ### `require_keys_eq!`
 
-Address comparison assertion. Uses Quasar's `keys_eq` function for constant-time address comparison:
+Address comparison assertion. Uses Quasar's `keys_eq` function for word-level (4 x u64) address comparison:
 
 ```rust
 require_keys_eq!(left, right, error)
@@ -219,11 +219,11 @@ require_keys_eq!(
 );
 ```
 
-Use `require_keys_eq!` instead of `require_eq!` when comparing `Address` values. The `keys_eq` function performs a byte-level comparison that is consistent across all contexts.
+Use `require_keys_eq!` instead of `require_eq!` when comparing `Address` values. The `keys_eq` function compares addresses as four `u64` words via `read_unaligned`, avoiding bounds checks and panic paths that `==` on byte slices would introduce.
 
-### Important note
+### No `require_neq!` macro
 
-There is no `require_neq!` macro. If you need an inequality check, use `require!` with a `!=` comparison:
+There is no `require_neq!` macro. Use `require!` with a `!=` comparison instead:
 
 ```rust
 require!(left != right, MyError::MustBeDifferent);

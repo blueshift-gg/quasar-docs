@@ -3,7 +3,7 @@ title: Instructions
 description: How to define instruction handlers in Quasar — discriminators, zero-copy argument deserialization, return data, and dispatch routing.
 ---
 
-Instructions are the entry points into your Solana program. Quasar's `#[instruction]` macro generates the dispatch routing, discriminator validation, and argument deserialization for each handler. This page covers how instructions work under the hood, how arguments are deserialized from the wire format, and how return data flows back to the caller.
+The `#[instruction]` macro generates discriminator validation, argument deserialization, and context construction for each handler.
 
 ## Defining an Instruction
 
@@ -28,13 +28,13 @@ mod quasar_vault {
 
 Each instruction function must:
 
-1. Have `ctx: Ctx<T>` or `ctx: CtxWithRemaining<T>` as its first parameter, where `T` is a type that implements `ParseAccounts`.
+1. Have `ctx: Ctx<T>` or `ctx: CtxWithRemaining<T>` as its first parameter, where `T` implements `ParseAccounts + AccountCount`.
 2. Specify a `discriminator` value in the attribute.
-3. Return `Result<(), ProgramError>` (or `Result<T, ProgramError>` for return data -- see below).
+3. Return `Result<(), ProgramError>` (or `Result<T, ProgramError>` for return data).
 
 ## Discriminators
 
-The discriminator is a byte prefix that identifies which instruction to invoke. Unlike some frameworks that derive discriminators from function name hashes, Quasar uses **developer-specified integers**. This gives you full control and makes the wire format predictable.
+Quasar uses developer-specified integer discriminators, not hash-derived ones. The wire format is fully predictable.
 
 ```rust
 #[instruction(discriminator = 0)]    // instruction data starts with [0x00]
@@ -46,29 +46,22 @@ pub fn withdraw(...) -> Result<(), ProgramError> { ... }
 
 ### Discriminator Rules
 
-- **Same length**: All discriminators in a program must have the same byte length. A single-byte discriminator like `0` gives you 255 possible instructions (0x00 through 0xFE).
-- **No duplicates**: The macro checks for duplicate discriminator values at compile time.
-- **No 0xFF prefix**: The byte `0xFF` is reserved for the event self-CPI protocol. Any discriminator starting with `0xFF` produces a compile error.
-- **Multi-byte discriminators**: For programs that need more than 255 instructions, you can use multi-byte discriminators with array syntax: `discriminator = [0, 1]`.
+- **Same length**: All discriminators in a program must have the same byte length. Single-byte gives you 255 possible instructions (0x00 through 0xFE).
+- **No duplicates**: Checked at compile time.
+- **No 0xFF prefix**: Reserved for the event self-CPI protocol. Compile error if violated.
+- **Multi-byte**: For programs needing more than 255 instructions: `discriminator = [0, 1]`.
 
 ### Dispatch Routing
 
-When an instruction arrives, the generated `__dispatch` function:
-
-1. Checks if the first byte is `0xFF` (event CPI) and routes accordingly.
-2. Reads the discriminator prefix from the instruction data.
-3. Matches it against the compile-time dispatch table.
-4. Calls the corresponding handler function.
-
-If no discriminator matches, the dispatch returns `ProgramError::InvalidInstructionData`.
+The generated `__dispatch` function checks the first byte for `0xFF` (routes to event handler), then reads the discriminator prefix and matches against the dispatch table. Unmatched discriminators return `ProgramError::InvalidInstructionData`.
 
 ## Argument Deserialization
 
-After the discriminator prefix, the remaining instruction data contains the function arguments. Quasar deserializes these using zero-copy pointer casts for fixed-size types and inline prefix reads for dynamic types.
+After the discriminator prefix, the remaining instruction data contains the function arguments. Fixed-size types use zero-copy pointer casts; dynamic types use inline prefix reads.
 
 ### Fixed-Size Arguments
 
-Fixed-size arguments (integers, `Address`, booleans) are mapped to Pod types with alignment 1 and read via a `#[repr(C)]` struct pointer cast:
+Fixed-size arguments (`u64`, `Address`, `bool`, etc.) are packed into a `#[repr(C)]` struct with Pod types (alignment 1) and read via pointer cast:
 
 ```rust
 #[instruction(discriminator = 0)]
@@ -77,21 +70,24 @@ pub fn deposit(ctx: Ctx<Deposit>, amount: u64) -> Result<(), ProgramError> {
 }
 ```
 
-The generated code creates an internal struct:
+Generated code:
 
 ```rust
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct InstructionDataZc {
-    amount: u64,  // Pod type, alignment 1
+    amount: PodU64,  // alignment 1
 }
-```
 
-A compile-time assertion ensures the struct has alignment 1. The instruction data buffer is then cast to a pointer to this struct, and fields are extracted without copying.
+const _: () = assert!(core::mem::align_of::<InstructionDataZc>() == 1);
+
+let __zc = unsafe { &*(ctx.data.as_ptr() as *const InstructionDataZc) };
+let amount = __zc.amount.get();  // PodU64::get() -> u64
+```
 
 ### Dynamic Arguments
 
-Dynamic arguments use length-prefixed encoding on the wire. Quasar supports `String<N>` (with a length prefix and max length) and `Vec<T, N>`:
+Dynamic arguments use length-prefixed encoding. `String<P, MAX>` (where `P` is the prefix type: `u8`, `u16`, or `u32`) and `Vec<T, P, MAX>`:
 
 ```rust
 #[instruction(discriminator = 2)]
@@ -100,26 +96,26 @@ pub fn set_label(ctx: Ctx<SetLabel>, label: String<32>) -> Result<(), ProgramErr
 }
 ```
 
-For `String<MAX>`, the generated deserialization:
-1. Reads the length prefix (1 or 2 bytes depending on the max length).
+`String<32>` uses the default `u32` prefix. The generated deserialization:
+1. Reads the length prefix bytes (1, 2, or 4 depending on prefix type).
 2. Validates the length does not exceed `MAX`.
 3. Validates UTF-8 encoding.
 4. Produces a `&str` reference pointing directly into the instruction data buffer.
 
-For `Vec<T, MAX>`, the process is similar but produces a `&[T]` slice. Vec element types must have alignment 1, enforced by a compile-time assertion.
+For `Vec<T, P, MAX>`, the process is similar but produces a `&[T]` slice. Vec element types must have alignment 1, enforced by a compile-time assertion.
 
 ### Tail Arguments
 
-A tail argument consumes all remaining instruction data after fixed and prefixed fields:
+A tail argument consumes all remaining instruction data after fixed and prefixed fields. Use bare `&[u8]` or `&str` as the parameter type:
 
 ```rust
 #[instruction(discriminator = 0)]
-pub fn process(ctx: Ctx<Process>, data: Tail<[u8]>) -> Result<(), ProgramError> {
-    // data is a &[u8] of the remaining instruction bytes
+pub fn process(ctx: Ctx<Process>, data: &[u8]) -> Result<(), ProgramError> {
+    // data is all remaining instruction bytes after fixed fields
 }
 ```
 
-Only one tail argument is allowed per instruction, and it must be the last parameter.
+Only one tail argument is allowed per instruction, and it must be the last parameter. `&str` tail arguments additionally validate UTF-8 encoding.
 
 ### Wire Format Summary
 
@@ -130,35 +126,30 @@ The instruction data layout for `deposit(ctx, amount: u64)` with `discriminator 
 [amount: 8 bytes LE]      <- u64 argument
 ```
 
-For `set_label(ctx, label: String<32>)` with `discriminator = 2`:
+For `set_label(ctx, label: String<32>)` with `discriminator = 2` (default `u32` prefix):
 
 ```text
 [0x02]                         <- discriminator (1 byte)
-[len: 1 byte]                  <- string length prefix
+[len: 4 bytes LE]              <- u32 string length prefix
 [label: len bytes UTF-8]       <- string data
 ```
 
 ## Context Types
 
-### `Ctx<T>`
-
-The standard instruction context. Contains:
-
-- `accounts: T` -- the validated, typed accounts struct
-- `bumps: T::Bumps` -- PDA bump seeds discovered during validation
-- `program_id: &[u8; 32]` -- the 32-byte program ID
-- `data: &[u8]` -- instruction data with discriminator already consumed
+### `Ctx<'info, T>`
 
 ```rust
-pub fn make(ctx: Ctx<Make>, deposit: u64, receive: u64) -> Result<(), ProgramError> {
-    ctx.accounts.make_escrow(receive, &ctx.bumps)?;
-    ctx.accounts.deposit_tokens(deposit)
+pub struct Ctx<'info, T: ParseAccounts<'info> + AccountCount> {
+    pub accounts: T,
+    pub bumps: T::Bumps,
+    pub program_id: &'info [u8; 32],
+    pub data: &'info [u8],        // instruction data, discriminator already consumed
 }
 ```
 
-### `CtxWithRemaining<T>`
+### `CtxWithRemaining<'info, T>`
 
-Like `Ctx<T>` but also captures the remaining accounts region. Use this for instructions that forward accounts to CPIs:
+Same fields as `Ctx`, plus a `remaining_accounts()` method that returns a `RemainingAccounts` iterator over accounts past the declared set:
 
 ```rust
 pub fn create(ctx: CtxWithRemaining<Create>, threshold: u8) -> Result<(), ProgramError> {
@@ -166,11 +157,9 @@ pub fn create(ctx: CtxWithRemaining<Create>, threshold: u8) -> Result<(), Progra
 }
 ```
 
-The `remaining_accounts()` method returns a `RemainingAccounts` iterator that walks the SVM input buffer past the declared accounts.
-
 ## Return Data
 
-Instructions can return data to the caller using `sol_set_return_data`. Change your return type to `Result<T, ProgramError>` where `T` is a fixed-size Pod type:
+Instructions can return data to the caller via `sol_set_return_data`. Use `Result<T, ProgramError>` where `T` is a fixed-size type with alignment 1:
 
 ```rust
 #[instruction(discriminator = 0)]
@@ -179,7 +168,7 @@ pub fn compute_value(ctx: Ctx<Compute>) -> Result<PodU64, ProgramError> {
 }
 ```
 
-The return type must have alignment 1 (Pod types). A compile-time assertion enforces this.
+The generated code runs the epilogue (close operations) before setting return data, then rewrites the function signature to return `Result<(), ProgramError>`. A compile-time assertion enforces alignment 1 on the return type.
 
 ## Instruction Data Access in Account Validation
 
@@ -197,7 +186,7 @@ pub struct CreateNft<'info> {
 
 ## Epilogue
 
-After the instruction handler returns, the framework runs an epilogue that closes any accounts marked with `close = destination`.
+After the instruction handler returns `Ok(())`, the generated code calls `accounts.epilogue()`, which executes `close` operations for any accounts marked with `close = destination`. The handler's result is checked first -- if it returns an error, the epilogue is skipped.
 
 ## Next Steps
 

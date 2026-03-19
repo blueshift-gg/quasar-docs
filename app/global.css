@@ -1,3 +1,89 @@
 @import 'tailwindcss';
 @import 'fumadocs-ui/css/neutral.css';
 @import 'fumadocs-ui/css/preset.css';
+
+/* Blueshift design system overrides */
+:root.dark {
+  /* Backgrounds */
+  --background: 220 20% 5%; /* #0B0E14 */
+  --foreground: 225 25% 95%; /* #EFF1F6 */
+  --muted: 220 15% 13%; /* #1A1E26 */
+  --muted-foreground: 222 15% 43%; /* #585E6C */
+  --card: 220 17% 11%; /* ~#161A22 */
+  --card-foreground: 225 25% 95%;
+  --popover: 220 17% 11%;
+  --popover-foreground: 225 25% 95%;
+  --border: 220 12% 20%;
+  --input: 220 12% 20%;
+
+  /* Accent — Blueshift cyan */
+  --primary: 180 97% 82%; /* #a9fefe */
+  --primary-foreground: 220 20% 5%;
+  --accent: 180 97% 82%;
+  --accent-foreground: 220 20% 5%;
+  --ring: 180 97% 82%;
+
+  /* Secondary */
+  --secondary: 220 17% 15%;
+  --secondary-foreground: 222 25% 78%; /* #ADB9D2 */
+
+  /* Sidebar */
+  --fd-sidebar-width: 260px;
+}
+
+/* Fonts — Funnel Display for headings, Fira Code for code */
+@import url('https://fonts.googleapis.com/css2?family=Funnel+Display:wght@300..800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@300..700&display=swap');
+
+:root {
+  --font-sans: 'Funnel Display', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Fira Code', ui-monospace, monospace;
+  --fd-font-sans: 'Funnel Display', ui-sans-serif, system-ui, sans-serif;
+  --fd-font-mono: 'Fira Code', ui-monospace, monospace;
+}
+
+body {
+  font-family: var(--font-sans);
+}
+
+code, pre, kbd {
+  font-family: var(--font-mono) !important;
+}
+
+/* Sidebar — bold section titles only, normal weight for page links */
+#nd-sidebar p {
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  color: hsl(222 15% 55%);
+}
+#nd-sidebar a {
+  font-weight: 400;
+}
+
+/* Cards — 3-column grid on docs landing */
+.grid[class*='grid-cols-2']:has([data-card]) {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+@media (max-width: 768px) {
+  .grid[class*='grid-cols-2']:has([data-card]) {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Code block styling — target the Shiki figure wrapper */
+.dark figure.shiki {
+  --shiki-dark-bg: #0d1017 !important;
+  background: #0d1017 !important;
+  border: 1px solid hsl(220 12% 15%);
+}
+.dark figure.shiki pre {
+  background: transparent !important;
+}
+
+/* Inline code */
+.dark :not(pre) > code {
+  background: rgba(169, 254, 254, 0.08);
+  color: #a9fefe;
+}

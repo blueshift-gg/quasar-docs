@@ -140,12 +140,7 @@ impl<'info> Create<'info> {
 }
 ```
 
-Key points:
-
-1. The handler receives `RemainingAccounts` as a parameter (passed from `ctx.remaining_accounts()`).
-2. Each remaining account is checked for the signer flag -- only signers are accepted as multisig members.
-3. Addresses are collected into a stack-allocated `MaybeUninit` array, avoiding heap allocation.
-4. The count is bounded at 10 (the maximum signers defined in `MultisigConfig`).
+Note that remaining accounts are unchecked by default -- the handler explicitly verifies `is_signer()` and bounds the count at 10. Addresses are collected into a stack-allocated `MaybeUninit` array to avoid heap allocation.
 
 ## Real example: multisig execution
 
@@ -204,14 +199,7 @@ impl<'info> ExecuteTransfer<'info> {
 }
 ```
 
-The pattern is:
-
-1. Read the stored signers from the dynamic `Vec` field on the config account.
-2. Iterate remaining accounts, counting how many are signers that match a stored address.
-3. Check the approval count against the threshold.
-4. Proceed with the transfer if enough approvals are present.
-
-Non-signer accounts are silently skipped (with `continue`), which allows clients to pass additional accounts without breaking the instruction.
+Non-signer accounts are silently skipped (with `continue`), allowing clients to pass additional accounts without breaking the instruction.
 
 ## Duplicate account handling
 

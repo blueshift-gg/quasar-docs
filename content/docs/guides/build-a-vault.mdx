@@ -3,7 +3,7 @@ title: Build a Vault
 description: Step-by-step guide to building a SOL vault program with Quasar.
 ---
 
-In this guide, we will build a SOL vault program from scratch using Quasar. The vault allows users to deposit SOL into a program-derived address (PDA) and withdraw it later. This is the simplest complete Quasar program and a great place to start.
+This guide builds a SOL vault program from scratch using Quasar. The vault allows users to deposit SOL into a program-derived address (PDA) and withdraw it later. It is the simplest complete Quasar program.
 
 By the end, you will understand how to:
 
@@ -61,7 +61,7 @@ The vault itself is an `UncheckedAccount` PDA. We do not need an `#[account]` st
 
 ## The program entrypoint
 
-Let's start with `lib.rs`, which declares the program ID and defines the instruction dispatch:
+`lib.rs` declares the program ID and defines the instruction dispatch:
 
 ```rust
 #![no_std]
@@ -89,7 +89,7 @@ mod quasar_vault {
 }
 ```
 
-Let's walk through this:
+Key elements:
 
 - **`#![no_std]`** -- Quasar programs run in the SBF runtime without the standard library. The framework provides everything you need through its prelude.
 - **`declare_id!`** -- Sets the program's on-chain address. Replace this with your actual program ID after deployment.
@@ -136,7 +136,7 @@ impl<'info> Deposit<'info> {
 
 ### The accounts struct
 
-The `#[derive(Accounts)]` macro generates all the deserialization and validation logic for the accounts this instruction needs. Let's look at each field:
+The `#[derive(Accounts)]` macro generates all the deserialization and validation logic for the accounts this instruction needs. Each field:
 
 **`user: &'info mut Signer`** -- The wallet depositing SOL. `Signer` verifies the account has signed the transaction. The `mut` reference means we need to modify its lamports (they decrease during the transfer).
 

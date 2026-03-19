@@ -134,15 +134,14 @@ The generated code checks the account's owner:
 - If the owner is the System program (uninitialized), it calls the ATA program's `CreateIdempotent` instruction, which is a no-op if the account happens to already exist.
 - If the owner is a token program (already initialized), it validates that the mint and authority match the expected values, returning `InvalidAccountData` on mismatch.
 
-This pattern is common in escrow and DEX programs where you cannot guarantee the user has already created their ATA:
+The escrow example uses `token::mint` / `token::authority` instead of `associated_token::*`:
 
 ```rust
-// From the escrow example -- create the taker's ATA if it doesn't exist
 #[account(init_if_needed, payer = taker, token::mint = mint_a, token::authority = taker)]
 pub taker_ta_a: &'info mut Account<Token>,
 ```
 
-Note that the escrow example uses `token::mint` / `token::authority` instead of `associated_token::*`. The `token::*` attributes create a **generic** token account (using `InitToken`), while `associated_token::*` attributes create an ATA at the deterministic address (using `InitAssociatedToken`). Choose based on whether you need the canonical ATA address or an arbitrary token account.
+The `token::*` attributes create a **generic** token account (using `InitToken`), while `associated_token::*` attributes create an ATA at the deterministic address (using `InitAssociatedToken`). Choose based on whether you need the canonical ATA address or an arbitrary token account.
 
 ## ATA validation without init
 

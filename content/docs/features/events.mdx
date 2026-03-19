@@ -38,7 +38,7 @@ pub struct RefundEvent {
 }
 ```
 
-This is the event file from the escrow example. Each event gets a unique discriminator within the program, used to identify the event type when parsing transaction logs.
+Each event gets a unique discriminator within the program, used to identify the event type when parsing transaction logs.
 
 ### Supported field types
 
@@ -53,7 +53,7 @@ Event structs support a fixed set of field types:
 | `u128`, `i128` | 16 bytes |
 | `Address` | 32 bytes |
 
-No other types are allowed. Strings, vectors, and custom structs are not supported in events. The macro rejects unsupported types at compile time with a clear error message.
+Strings, vectors, and custom structs are not supported. The macro rejects unsupported types at compile time.
 
 ### What the macro generates
 
@@ -238,7 +238,7 @@ Events with no fields are supported. They emit only the discriminator:
 pub struct EmptyEvent {}
 ```
 
-This can be useful as a signal that an action occurred, without any associated data.
+Useful as a signal that an action occurred, without any associated data.
 
 ## Parsing events off-chain
 

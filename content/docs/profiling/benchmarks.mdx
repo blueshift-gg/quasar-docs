@@ -3,19 +3,19 @@ title: Benchmarks
 description: CU benchmarks and comparison methodology for Quasar programs.
 ---
 
-Quasar programs consistently achieve near-hand-written CU efficiency thanks to zero-copy account deserialization, compile-time code generation, and aggressive inlining. This page covers how to benchmark your own programs and how Quasar compares to other frameworks.
+Quasar programs achieve near-hand-written CU efficiency through zero-copy account access, compile-time code generation, and aggressive inlining. This page covers how to benchmark your own programs and how Quasar compares to other frameworks.
 
 ## Framework Comparison
 
-Using a standard vault program (deposit instruction: PDA derivation + system transfer CPI) as the benchmark:
+Using a standard vault program (PDA derivation + system transfer CPI for deposit, direct lamport manipulation for withdraw) as the benchmark:
 
-| Framework | Deposit CU | Notes |
-|-----------|-----------|-------|
-| **Quasar** | **2,816** | Zero-copy, no allocations, compile-time codegen |
-| **Pinocchio** | 2,833 | Hand-optimized, no framework overhead |
-| **Anchor** | ~5,500 | Borsh deserialization, runtime checks |
+| Framework | Deposit CU | Withdraw CU | Notes |
+|-----------|-----------|------------|-------|
+| **Quasar** | **2,816** | **1,618** | Zero-copy, no allocations, compile-time codegen |
+| **Pinocchio** | 2,833 | 1,635 | Hand-optimized, no framework overhead |
+| **Anchor** | ~5,500 | — | Borsh deserialization, runtime checks |
 
-Quasar achieves CU parity with Pinocchio -- a library designed for hand-tuned, minimal-overhead Solana programs -- while providing a full framework with derive macros, auto-generated clients, and constraint validation.
+Both instructions show Quasar at -17 CU compared to hand-written Pinocchio. Quasar achieves this while providing a full framework with derive macros, auto-generated clients, and constraint validation.
 
 The difference from Anchor comes primarily from:
 
@@ -30,11 +30,14 @@ The difference from Anchor comes primarily from:
 The fastest way to get a CU count is the static profiler:
 
 ```bash
-quasar build --debug
 quasar profile
 ```
 
-This walks the binary's call graph and reports the total CU count per instruction handler. The output is deterministic -- you get the same number every run for the same binary.
+This automatically runs a profile build (with debug symbols) if needed, then walks the binary's instruction stream and reports the total CU count per function. The output is deterministic -- you get the same number every run for the same binary. You can also pass an ELF path explicitly:
+
+```bash
+quasar profile target/deploy/my_program.so
+```
 
 ### Using Mollusk in Tests
 
@@ -92,19 +95,19 @@ The static profiler and runtime measurement may differ slightly:
 
 | Method | Measures | Accuracy |
 |--------|----------|----------|
-| `quasar profile` | Instruction count via call graph walk | Slightly higher (counts all reachable code) |
+| `quasar profile` | Instruction count via `.text` section walk | Slightly higher (counts all instructions in the binary) |
 | Mollusk `compute_units_consumed` | Actual CU consumed by the SVM | Exact match to on-chain |
 
-The static profiler may report slightly higher numbers because it counts all instructions in functions that are reachable from the call graph, even if some branches are never taken at runtime. For precise CU counts, use Mollusk.
+The static profiler may report higher numbers because it counts every instruction in the `.text` section -- including functions that are never reached at runtime, and branches within reached functions that are never taken. For precise CU counts matching on-chain behavior, use Mollusk.
 
 Both methods are useful: the profiler for fast iteration and per-function breakdown, Mollusk for exact on-chain-matching numbers.
 
 ## Comparing Against On-Chain Programs
 
-The `--diff` flag lets you compare your local build against a deployed program:
+The `--diff` flag opens the diff view for comparing profiles:
 
 ```bash
-quasar profile --diff <PROGRAM_ADDRESS>
+quasar profile --diff <PROGRAM_NAME>
 ```
 
 This is useful for:
@@ -113,7 +116,7 @@ This is useful for:
 - **Competitive analysis** -- Compare your program's CU efficiency against similar deployed programs
 - **Upgrade planning** -- See exactly which functions changed and by how much
 
-The diff opens an interactive flamegraph that overlays both profiles, highlighting regressions in red and improvements in green.
+The diff prints a flamegraph URL and starts a blocking server. Open the URL to see the overlay view highlighting regressions in red and improvements in green. Press Ctrl-C to stop the server.
 
 ## Tracking CU Over Time
 
@@ -130,8 +133,7 @@ For CI integration, you can parse the profiler output or read the JSON profile f
 
 ```bash
 # Profile and check total CU is under budget
-quasar build --debug
-quasar profile target/deploy/my_program.so
+quasar profile
 ```
 
 ## Optimization Checklist

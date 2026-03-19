@@ -1,6 +1,6 @@
 ---
 title: Type Mapping
-description: Mapping between Rust types and their zero-copy Pod representations.
+description: Mapping between Rust types, zero-copy Pod representations, and IDL/TypeScript types.
 ---
 
 Quasar uses zero-copy account access, which means account data is read directly from the runtime's memory buffer without deserialization. To make this safe and portable, native Rust integer types are mapped to alignment-1 Pod types that store values as little-endian byte arrays.
@@ -307,3 +307,32 @@ Use `space = <expr>` on `init` to override the computed space:
 #[account(init, payer = payer, space = 8 + 32 + 4 + name.len())]
 pub profile: &'info mut Account<Profile<'info>>,
 ```
+
+---
+
+## IDL Type Mapping
+
+The IDL generator maps Rust types to IDL primitive names, which the TypeScript client generator then maps to TypeScript types and codec functions.
+
+### Rust to IDL to TypeScript
+
+| Rust Type | IDL Type | TypeScript Type | Codec (`@solana/codecs`) |
+|-----------|----------|-----------------|--------------------------|
+| `u8` | `u8` | `number` | `getU8Codec()` |
+| `u16` | `u16` | `number` | `getU16Codec()` |
+| `u32` | `u32` | `number` | `getU32Codec()` |
+| `u64` | `u64` | `bigint` | `getU64Codec()` |
+| `u128` | `u128` | `bigint` | `getU128Codec()` |
+| `i8` | `i8` | `number` | `getI8Codec()` |
+| `i16` | `i16` | `number` | `getI16Codec()` |
+| `i32` | `i32` | `number` | `getI32Codec()` |
+| `i64` | `i64` | `bigint` | `getI64Codec()` |
+| `i128` | `i128` | `bigint` | `getI128Codec()` |
+| `bool` | `bool` | `boolean` | `getBooleanCodec()` |
+| `Address` / `Pubkey` | `publicKey` | `Address` | `getAddressCodec()` (kit) |
+| `String` | `string` | `string` | -- |
+| `String<N>` | `{ string: { maxLength: N } }` | `string` | `getDynStringCodec()` |
+| `Vec<T, N>` | `{ vec: { items: T, maxLength: N } }` | `Array<T>` | `getDynVecCodec(T)` |
+| `&str` (tail) | `{ tail: { element: "string" } }` | `string` | `getUtf8Codec()` |
+| `&[u8]` (tail) | `{ tail: { element: "bytes" } }` | `Uint8Array` | `getBytesCodec()` |
+| Custom struct | `{ defined: "Name" }` | `Name` | `NameCodec` |

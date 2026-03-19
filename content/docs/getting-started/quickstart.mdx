@@ -3,49 +3,31 @@ title: Quickstart
 description: Build your first Quasar program in minutes.
 ---
 
-This guide takes you from zero to a deployed Solana program using Quasar. By the end, you will have scaffolded a project, written an instruction, built it, tested it, and deployed it.
-
 ## Scaffold a new project
 
-Run `quasar init` to create a new project. You can either answer the interactive prompts or provide flags directly:
+Run `quasar init` to create a new project:
 
 ```bash
 quasar init my-program
 ```
 
-The CLI will prompt you for three choices:
+The CLI prompts for three choices:
 
-1. **Toolchain** -- `solana` (default) or `upstream`. See the [Installation guide](./installation) for details on each.
+1. **Toolchain** -- `solana` (default) or `upstream`. See [Installation](./installation) for details.
 2. **Testing framework** -- `QuasarSVM/Rust` (default), `Mollusk`, `QuasarSVM/Web3.js`, `QuasarSVM/Kit`, or `None`.
 3. **Template** -- `Minimal` (instruction file only) or `Full` (adds state and events modules).
 
-To skip all prompts with sensible defaults:
+Skip all prompts:
 
 ```bash
 quasar init my-program --toolchain solana --framework quasarsvm-rust --template minimal
 ```
 
-Once scaffolding is complete, you will see:
-
-```
-  Created my-program project
-
-  Next steps:
-    cd my-program
-    quasar build
-```
-
 ## Project structure
-
-Move into the new directory and take a look at what was generated:
-
-```bash
-cd my-program
-```
 
 ### Quasar.toml
 
-The project manifest. It records your project name, toolchain, and testing framework:
+Project manifest recording name, toolchain, and testing framework:
 
 ```toml
 [project]
@@ -58,17 +40,21 @@ type = "solana"
 framework = "quasarsvm-rust"
 ```
 
-The CLI reads this file for every `quasar build`, `quasar test`, and `quasar deploy` command.
-
 ### Cargo.toml
 
-A standard Rust crate with `crate-type = ["cdylib"]` so it compiles to a shared object the Solana runtime can load:
+Standard Rust crate with `crate-type = ["cdylib"]` so it compiles to a shared object the Solana runtime can load:
 
 ```toml
 [package]
 name = "my-program"
 version = "0.1.0"
 edition = "2021"
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = [
+    'cfg(target_os, values("solana"))',
+]
 
 [lib]
 crate-type = ["cdylib"]
@@ -82,11 +68,11 @@ debug = []
 quasar-lang = { git = "https://github.com/blueshift-gg/quasar" }
 ```
 
-Key features: `debug` enables verbose error logging on-chain; `client` enables the off-chain instruction builder module; `alloc` enables heap allocation for programs that need it.
+Feature flags: `debug` enables verbose error logging on-chain (account name and index in constraint failures); `client` enables the off-chain instruction builder module; `alloc` enables heap allocation for programs that need it.
 
 ### src/lib.rs
 
-The program entrypoint. For the minimal template, it looks like this:
+The program entrypoint:
 
 ```rust
 #![cfg_attr(not(test), no_std)]
@@ -109,17 +95,13 @@ mod my_program {
 }
 ```
 
-Let's break this down:
-
-- **`#![cfg_attr(not(test), no_std)]`** -- The program runs in a `no_std` environment on-chain, but enables `std` during tests so you can use assertions, printing, and test harnesses.
-- **`declare_id!`** -- Sets the program's on-chain address. The CLI generates a keypair in `target/deploy/` and embeds the corresponding public key here automatically.
-- **`#[program]`** -- Marks this module as the program entrypoint. Quasar generates the dispatch table, entrypoint function, and (for off-chain targets) a client module from the instructions defined inside.
-- **`#[instruction(discriminator = 0)]`** -- Each instruction gets an explicit numeric discriminator. This is what the dispatch table matches against when the program receives a transaction. Discriminators must be unique and non-zero within a program.
-- **`Ctx<Initialize>`** -- A typed context containing the parsed and validated `Initialize` accounts struct plus PDA bumps.
+- **`#![cfg_attr(not(test), no_std)]`** -- `no_std` on-chain, `std` during tests.
+- **`declare_id!`** -- Program's on-chain address. The CLI generates a keypair in `target/deploy/` and embeds the public key here.
+- **`#[program]`** -- Generates the dispatch table, entrypoint function, and (for off-chain targets) a client module.
+- **`#[instruction(discriminator = 0)]`** -- Each instruction gets an explicit discriminator. Accepts a single integer (`discriminator = 0`) or a byte array (`discriminator = [1, 0, 0, 0]`). Discriminators must be unique within a program. The dispatch table matches on these bytes.
+- **`Ctx<Initialize>`** -- Typed context containing the parsed and validated `Initialize` accounts struct plus PDA bumps.
 
 ### src/instructions/initialize.rs
-
-The instruction handler defines which accounts the instruction needs and what it does with them:
 
 ```rust
 use quasar_lang::prelude::*;
@@ -138,32 +120,24 @@ impl<'info> Initialize<'info> {
 }
 ```
 
-Key points:
-
-- **`#[derive(Accounts)]`** -- Generates the parsing and validation code. Each field is a typed account reference with automatic checks (signer verification, ownership, mutability).
-- **`&'info mut Signer`** -- A mutable reference to a signer account. The `mut` means the account must be passed as writable; `Signer` means the transaction must include its signature.
-- **`&'info Program<System>`** -- A reference to the System program, validated by address.
-- **The `impl` block** -- Your business logic lives here. The accounts struct is parsed and validated before your code runs, so you can focus on what the instruction should do.
+- **`#[derive(Accounts)]`** -- Generates parsing and validation. Each field is a typed account reference with automatic checks (signer, ownership, mutability).
+- **`&'info mut Signer`** -- Mutable reference to a signer. `mut` = writable; `Signer` = requires signature.
+- **`&'info Program<System>`** -- Reference to the System program, validated by address.
+- **The `impl` block** -- Business logic. Accounts are parsed and validated before your code runs.
 
 ### Generated keypair
 
-The CLI generates a program keypair at `target/deploy/my-program-keypair.json`. This keypair determines your program's on-chain address. The public key is automatically embedded in `declare_id!` in `lib.rs`.
+The CLI generates a program keypair at `target/deploy/my-program-keypair.json` and embeds the public key in `declare_id!`.
 
 ## Add a new instruction
-
-Use the `quasar new instruction` command to scaffold a new instruction:
 
 ```bash
 quasar new instruction transfer
 ```
 
-This does three things:
+This creates `src/instructions/transfer.rs`, updates `src/instructions/mod.rs`, and adds the instruction to the `#[program]` block in `src/lib.rs` with the next available discriminator.
 
-1. Creates `src/instructions/transfer.rs` with a starter accounts struct and handler.
-2. Updates `src/instructions/mod.rs` to include the new module.
-3. Updates `src/lib.rs` to add the instruction to the program's dispatch table with the next available discriminator.
-
-The generated file looks like:
+Generated file:
 
 ```rust
 use quasar_lang::prelude::*;
@@ -182,7 +156,7 @@ impl<'info> Transfer<'info> {
 }
 ```
 
-And your `lib.rs` now has:
+Updated `lib.rs`:
 
 ```rust
 #[program]
@@ -201,21 +175,19 @@ mod my_program {
 }
 ```
 
-Notice the discriminator is automatically incremented. You can rename the instruction, edit its accounts, and add parameters to make it do something useful.
+The discriminator auto-increments from the highest existing value in the `#[program]` block.
 
 ## Build the program
-
-Compile the program to SBF:
 
 ```bash
 quasar build
 ```
 
-This invokes the appropriate build command based on your toolchain setting (`cargo build-sbf` for the Solana toolchain, `cargo +nightly build-bpf` for upstream). It also generates the IDL and client code in `target/`.
+Invokes `cargo build-sbf` (Solana toolchain) or `cargo +nightly build-bpf` (upstream) based on `Quasar.toml`. Also generates the IDL and client code in `target/`.
 
-On success, the compiled program is at `target/deploy/my_program.so`.
+Output: `target/deploy/my_program.so`.
 
-To build with debug logging enabled (useful during development):
+Build with debug logging (verbose constraint failure messages):
 
 ```bash
 quasar build --debug
@@ -223,15 +195,13 @@ quasar build --debug
 
 ## Test the program
 
-If you selected a testing framework during init, run your tests with:
-
 ```bash
 quasar test
 ```
 
-This builds the program first (unless `--no-build` is passed), then runs the test suite. For Rust-based frameworks (Mollusk, QuasarSVM/Rust), this runs `cargo test`. For TypeScript-based frameworks (QuasarSVM/Web3.js, QuasarSVM/Kit), this runs the TypeScript test runner.
+Builds the program first (unless `--no-build` is passed), then runs the test suite. Rust frameworks (Mollusk, QuasarSVM/Rust) use `cargo test`; TypeScript frameworks (QuasarSVM/Web3.js, QuasarSVM/Kit) use the TypeScript test runner.
 
-You can filter tests by name:
+Filter by name:
 
 ```bash
 quasar test --filter test_initialize
@@ -239,25 +209,18 @@ quasar test --filter test_initialize
 
 ## Deploy the program
 
-Once you are satisfied with your program, deploy it to a cluster:
-
 ```bash
-# Deploy to devnet
 solana config set --url devnet
 quasar deploy
 ```
 
-The `quasar deploy` command reads the keypair from `target/deploy/` and deploys the compiled `.so` file. You can also specify a custom keypair or upgrade authority:
-
-```bash
-quasar deploy --program-keypair ./my-keypair.json
-```
+Reads the keypair from `target/deploy/` and deploys the compiled `.so` file. Specify a custom keypair with `quasar deploy --program-keypair ./my-keypair.json`.
 
 ## The full template
 
-If you chose the `Full` template during init, your project also includes `src/state.rs` and `src/events.rs`:
+The `Full` template adds `src/state.rs` and `src/events.rs`:
 
-**src/state.rs** -- Define on-chain account types:
+**src/state.rs** -- On-chain account types:
 
 ```rust
 use quasar_lang::prelude::*;
@@ -269,7 +232,7 @@ pub struct MyAccount {
 }
 ```
 
-**src/events.rs** -- Define events that can be emitted during execution:
+**src/events.rs** -- Events emitted during execution:
 
 ```rust
 use quasar_lang::prelude::*;
@@ -280,11 +243,9 @@ pub struct InitializeEvent {
 }
 ```
 
-For a complete walkthrough of building a real program with state, events, and multiple instructions, see the [Build a Vault](/docs/guides/build-a-vault) guide.
+For a full program with state, events, and multiple instructions, see [Build a Vault](/docs/guides/build-a-vault).
 
 ## What's next
-
-You now have a working Quasar program. Here are some paths forward:
 
 - **[Core Concepts](/docs/core-concepts)** -- Understand how zero-copy accounts, discriminators, and the dispatch model work under the hood.
 - **[Account Constraints](/docs/references/account-constraints)** -- Learn about `seeds`, `has_one`, `constraint`, `init`, `close`, and other account attributes.

@@ -3,11 +3,9 @@ title: Cross-Program Invocations
 description: Stack-allocated CPI with const-generic account and data sizes — zero heap allocation by design.
 ---
 
-Cross-program invocations (CPI) in Quasar are built around two const-generic types that keep everything on the stack. No heap allocation, no intermediate borrow checking — just raw pointer arithmetic straight to the `sol_invoke_signed_c` syscall.
+Cross-program invocations (CPI) in Quasar use two const-generic types that keep everything on the stack: `CpiCall` for fixed-size instruction data, and `BufCpiCall` for variable-length data. Both go directly to the `sol_invoke_signed_c` syscall with no intermediate `Instruction` struct or `Vec` allocation.
 
 ## CpiCall: Fixed-Size CPI
-
-`CpiCall<'a, const ACCTS: usize, const DATA: usize>` is the primary CPI type. Both the account count and instruction data size are known at compile time:
 
 ```rust
 pub struct CpiCall<'a, const ACCTS: usize, const DATA: usize> {
@@ -18,28 +16,21 @@ pub struct CpiCall<'a, const ACCTS: usize, const DATA: usize> {
 }
 ```
 
-Everything lives in stack-allocated fixed-size arrays. The compiler knows the exact memory layout at build time, which means zero runtime overhead for buffer management.
+Both the account count and instruction data size are const generics, so the entire struct is stack-allocated with a known layout at compile time.
 
-### Invocation Methods
-
-Every `CpiCall` provides three invocation methods:
+Three invocation methods:
 
 ```rust
-// No PDA signers needed
-cpi_call.invoke()?;
-
-// Single PDA signer (most common)
-cpi_call.invoke_signed(&seeds)?;
-
-// Multiple PDA signers
-cpi_call.invoke_with_signers(&[signer_a, signer_b])?;
+cpi_call.invoke()?;                            // No PDA signers
+cpi_call.invoke_signed(&seeds)?;               // Single PDA signer
+cpi_call.invoke_with_signers(&[s1, s2])?;      // Multiple PDA signers
 ```
 
-Under the hood, all three call `invoke_raw`, which passes raw pointers directly to `sol_invoke_signed_c` — the SVM syscall for CPI. There is no intermediate `Instruction` struct, no `Vec` allocation, no borrow checking overhead.
+All three call `invoke_raw`, which constructs a `#[repr(C)]` `CInstruction` and passes raw pointers directly to `sol_invoke_signed_c`.
 
 ## BufCpiCall: Variable-Length CPI
 
-When instruction data has a variable length (e.g., Borsh-serialized payloads), use `BufCpiCall<'a, const ACCTS: usize, const MAX: usize>`:
+For variable-length instruction data (e.g., Borsh-serialized payloads), use `BufCpiCall`:
 
 ```rust
 pub struct BufCpiCall<'a, const ACCTS: usize, const MAX: usize> {
@@ -51,24 +42,20 @@ pub struct BufCpiCall<'a, const ACCTS: usize, const MAX: usize> {
 }
 ```
 
-The buffer has a compile-time maximum capacity (`MAX`) but tracks the actual data length at runtime. The constructor validates `data_len <= MAX` and panics if exceeded. This gives you variable-length semantics without heap allocation.
-
-`BufCpiCall` exposes the same `invoke()`, `invoke_signed()`, and `invoke_with_signers()` methods as `CpiCall`.
+The buffer has compile-time maximum capacity `MAX` but tracks actual data length at runtime. The constructor panics if `data_len > MAX`. Same invocation methods as `CpiCall`.
 
 ## System Program Helpers
 
-Quasar provides typed helper functions for the most common System program CPIs. These return `CpiCall` instances with exact sizes:
+Free functions in `quasar_lang::cpi::system` and methods on `Program<System>`:
 
-| Function | Type | Description |
-|----------|------|-------------|
-| `transfer` | `CpiCall<2, 12>` | Transfer lamports between accounts |
-| `create_account` | `CpiCall<2, 52>` | Create a new account with space and owner |
-| `assign` | `CpiCall<1, 36>` | Assign an account to a new owner program |
-| `create_account_with_minimum_balance` | `CpiCall<2, 52>` | Create with rent-exempt balance (fetches Rent sysvar) |
+| Function | Return Type | Description |
+|----------|-------------|-------------|
+| `transfer` | `CpiCall<2, 12>` | Transfer lamports (discriminator `2`) |
+| `create_account` | `CpiCall<2, 52>` | Create account with space and owner (discriminator `0`) |
+| `assign` | `CpiCall<1, 36>` | Reassign account to a new owner (discriminator `1`) |
+| `create_account_with_minimum_balance` | `Result<CpiCall<2, 52>, ProgramError>` | Create with rent-exempt balance (fetches Rent sysvar if not provided) |
 
-### Using Free Functions
-
-The free functions accept raw `&AccountView` references:
+Free functions accept `&AccountView` references:
 
 ```rust
 use quasar_lang::cpi::system;
@@ -78,35 +65,29 @@ system::create_account(payer_view, new_view, lamports, space, &owner).invoke()?;
 system::assign(account_view, &new_owner).invoke()?;
 ```
 
-### Using Program Methods
-
-More commonly, you call methods on `Program<System>`, which accepts any type implementing `AsAccountView`:
+`Program<System>` methods accept `&impl AsAccountView`, so you can pass `&Account<T>`, `&Signer`, `&UncheckedAccount`, etc. directly:
 
 ```rust
-// From the vault example: simple SOL transfer
 self.system_program
     .transfer(self.user, self.vault, amount)
     .invoke()?;
 
-// Create account with minimum rent-exempt balance
 self.system_program
     .create_account_with_minimum_balance(
         self.payer,
         self.new_account,
         space,
         &owner,
-        Some(&self.rent),
+        Some(&*self.rent),  // Option<&Rent>
     )?
     .invoke()?;
 ```
 
-The `Program<System>` methods convert each account to an `AccountView` via `to_account_view()` before constructing the `CpiCall`. This means you can pass `&Account<T>`, `&Signer`, `&UncheckedAccount`, or any other Quasar account type directly.
-
 ## PDA Signing with Bumps
 
-When a CPI requires a PDA signer, use the `Bumps` struct generated by `#[derive(Accounts)]`. It provides `*_seeds()` methods that return properly formatted seed slices.
+When a CPI requires a PDA signer, use the `Bumps` struct generated by `#[derive(Accounts)]`. Its `*_seeds()` methods return `[Seed; N]` arrays ready for `invoke_signed`.
 
-Here is a real example from the escrow program's `take` instruction, where the escrow PDA must sign for token transfers:
+From the escrow program's `take` instruction:
 
 ```rust
 impl<'info> Take<'info> {
@@ -135,7 +116,7 @@ The `TakeBumps` struct is auto-generated from the `Take` accounts struct (see [A
 
 ## Token Program CPI
 
-The `quasar-spl` crate wraps the SPL Token program with typed CPI helpers. Methods are available on `Program<Token>`:
+The `quasar-spl` crate provides typed CPI helpers. Methods on `Program<Token>`:
 
 ```rust
 // Transfer tokens (no PDA signer)
@@ -157,73 +138,49 @@ self.vault_ta_a
     .invoke_signed(&seeds)?;
 ```
 
-All SPL CPI helpers follow the same `CpiCall` pattern — stack-allocated, const-generic, invoked through `.invoke()` or `.invoke_signed()`.
-
 ## declare_program! — Typed CPI from IDL
 
-The `declare_program!` macro generates a typed CPI module from a program's IDL JSON at compile time. This enables type-safe cross-program calls without manually constructing instruction data.
+`declare_program!` reads a program's IDL JSON at compile time and generates a typed CPI module:
 
 ```rust
 declare_program!(my_program, "path/to/program.idl.json");
 ```
 
-This generates:
-
-- A module named `my_program`
-- A program type (e.g., `MyProgram`) with `Id` and address checks
-- A `const ID: Address` for the program's address
-- Free functions for each instruction that return `CpiCall` instances
+This generates a `pub mod my_program` containing:
+- `pub const ID: Address` -- the program address from the IDL
+- A program type (e.g., `MyProgram`) with `Executable` + `Address` checks and `Id` impl
+- A free function per instruction that accepts `&AccountView` references and returns a `CpiCall`
 - Methods on the program type that accept `&impl AsAccountView`
 
 ### Generated CPI Functions
 
-For an IDL instruction like:
-
-```json
-{
-  "name": "Transfer",
-  "discriminator": [2],
-  "accounts": [
-    { "name": "from", "writable": true, "signer": true },
-    { "name": "to", "writable": true }
-  ],
-  "args": [
-    { "name": "amount", "type": "u64" }
-  ]
-}
-```
-
-The macro generates:
+For an IDL instruction `"Transfer"` with discriminator `[2]`, two accounts (`from`: writable+signer, `to`: writable), and one arg (`amount: u64`):
 
 ```rust
 pub mod my_program {
     pub const ID: Address = address!("...");
 
-    // Free function variant
+    // Free function: accounts as &AccountView
     pub fn transfer<'a>(
         __program: &'a AccountView,
         from: &'a AccountView,
         to: &'a AccountView,
         amount: u64,
-    ) -> CpiCall<'a, 2, 12> {
-        // Writes discriminator + args into a fixed-size buffer
-        // Constructs InstructionAccount entries with correct flags
-        // Returns a ready-to-invoke CpiCall
-    }
+    ) -> CpiCall<'a, 2, 9> { /* ... */ }
 
-    // Method variant on the program type
+    // Method: accounts as &impl AsAccountView
     impl MyProgram {
         pub fn transfer<'a>(
             &'a self,
             from: &'a impl AsAccountView,
             to: &'a impl AsAccountView,
             amount: u64,
-        ) -> CpiCall<'a, 2, 12> { /* ... */ }
+        ) -> CpiCall<'a, 2, 9> { /* ... */ }
     }
 }
 ```
 
-The data buffer size is computed at macro expansion time from the discriminator length plus the sum of all argument byte sizes. Account flags (`writable`, `signer`) are set from the IDL metadata.
+The data buffer size (`9` = 1-byte discriminator + 8-byte u64) is computed at macro expansion time from the discriminator length plus the sum of all argument byte sizes. Account flags (`writable`, `signer`) are set from IDL metadata.
 
 ### Supported Argument Types
 
@@ -240,13 +197,13 @@ The data buffer size is computed at macro expansion time from the discriminator 
 
 Defined types (structs) are not supported in CPI arguments — only fixed-size primitives and addresses.
 
-## Events via CPI
+## Events
 
-Quasar supports two event emission mechanisms:
+Two emission mechanisms:
 
-### Log-Based Events (~100 CU)
+### Log-Based: `emit!` (~100 CU)
 
-The `emit!` macro serializes the event and writes it to the program log:
+Calls `emit_log()` on the event, which serializes it and writes it to the program log via `sol_log_data`:
 
 ```rust
 emit!(MakeEvent {
@@ -259,25 +216,21 @@ emit!(MakeEvent {
 });
 ```
 
-This is fast but can be spoofed by other programs writing to the same log.
+Fast but spoofable -- other programs can write to the same log.
 
-### Self-CPI Events (~1,000 CU)
+### Self-CPI: `emit_cpi!` (~1,000 CU)
 
-For tamper-proof events, Quasar uses a self-CPI pattern. The `#[program]` macro generates an `EventAuthority` PDA (seeds: `["__event_authority"]`) computed at compile time. The event discriminator `0xFF` prefix is reserved for this protocol.
+The `emit_cpi!` macro expands to `self.program.emit_event(&event, self.event_authority, crate::EventAuthority::BUMP)`. This requires the accounts struct to have `program` and `event_authority` fields. The program invokes itself with the event data prefixed by `0xFF`, signed by the `EventAuthority` PDA (seeds: `["__event_authority"]`). The `__handle_event` dispatch handler verifies the event authority's signature and address, then logs the event data.
 
-When a self-CPI event is emitted, the program invokes itself with the event data, signed by the `EventAuthority` PDA. Because the program ID appears in the transaction trace, clients can verify the event was genuinely emitted by the program.
+Because the program ID appears in the transaction trace, clients can verify the event was genuinely emitted by the program.
 
-## How CPI Works Internally
+## Internals
 
-Under the hood, `CpiCall::invoke()` calls `invoke_raw`, which constructs a `#[repr(C)]` instruction struct and passes it directly to the `sol_invoke_signed_c` syscall:
+`CpiCall::invoke()` calls `invoke_raw`, which:
 
-1. **Account conversion**: `cpi_account_from_view` reads the 4-byte header `[borrow_state, is_signer, is_writable, executable]` as a `u32`, shifts right 8 bits to drop `borrow_state`, and stores the three flag bytes. This is a single unaligned read rather than three separate field accesses.
+1. **Account flag extraction**: `cpi_account_from_view` reads the 4-byte header `[borrow_state, is_signer, is_writable, executable]` as a `u32`, shifts right 8 bits to drop `borrow_state`, and stores the three flag bytes in a `RawCpiBuilder` struct. This is then transmuted to `CpiAccount` (verified layout-compatible by compile-time assertions).
 
-2. **Instruction layout**: The `CInstruction` struct is `#[repr(C)]` and layout-compatible with the C struct expected by the SVM syscall.
-
-3. **No intermediate types**: There is no `solana_instruction::Instruction`, no `Vec<AccountMeta>`, no `to_vec()` on the data. Raw pointers go straight to the syscall.
-
-This design means CPI overhead is essentially just the syscall cost itself.
+2. **Syscall dispatch**: A `CInstruction` struct (`#[repr(C)]`, layout-compatible with the C struct expected by `sol_invoke_signed_c`) is constructed on the stack and passed directly to the syscall. No `solana_instruction::Instruction`, no `Vec<AccountMeta>`, no data serialization.
 
 ## Next Steps
 

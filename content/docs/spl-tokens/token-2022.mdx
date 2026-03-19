@@ -123,7 +123,7 @@ pub struct InitVault<'info> {
 }
 ```
 
-The same `InitToken` and `InitMint` traits are bounded on `TokenCpi`, which is implemented by all three program wrappers.
+The `InitToken` and `InitMint` methods take `token_program: &impl TokenCpi`, which is implemented by all three program wrappers (`Program<Token>`, `Program<Token2022>`, `Interface<TokenInterface>`).
 
 ## TokenClose with interfaces
 
