@@ -3,4 +3,466 @@ title: Build an Escrow
 description: Step-by-step guide to building a token escrow program with Quasar.
 ---
 
-Content coming soon.
+In this guide, we will build a token escrow program with Quasar. An escrow lets a maker deposit tokens of one mint and specify how many tokens of a different mint they want in return. A taker can fulfill the trade, or the maker can cancel and reclaim their tokens.
+
+By the end, you will understand how to:
+
+- Define on-chain state with the `#[account]` macro
+- Initialize accounts with `init` and `init_if_needed`
+- Perform SPL token CPI (transfers and account closures)
+- Sign CPIs on behalf of a PDA using `invoke_signed`
+- Close accounts and reclaim rent
+- Emit on-chain events with `emit!`
+
+This guide assumes you have read [Build a Vault](/docs/guides/build-a-vault) and are familiar with the basic Quasar project structure.
+
+## Project setup
+
+Create a new project and add the SPL token dependency:
+
+```toml
+[package]
+name = "quasar-escrow"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+alloc = []
+client = []
+debug = []
+
+[dependencies]
+quasar-lang = { version = "0.1.0" }
+quasar-spl = { version = "0.1.0" }
+```
+
+The `quasar-spl` crate provides zero-copy account types for SPL tokens (`Mint`, `Token`) and type-safe CPI builders (`TokenCpi`, `TokenClose`).
+
+## File structure
+
+```
+src/
+  lib.rs                # Program entrypoint
+  state.rs              # Escrow account definition
+  events.rs             # Event structs
+  instructions/
+    mod.rs              # Re-exports
+    make.rs             # Create escrow and deposit tokens
+    take.rs             # Fulfill the escrow trade
+    refund.rs           # Cancel and reclaim tokens
+```
+
+## Defining the escrow state
+
+Let\'s start with the escrow account in `state.rs`:
+
+```rust
+use quasar_lang::prelude::*;
+
+#[account(discriminator = 1)]
+pub struct Escrow {
+    pub maker: Address,
+    pub mint_a: Address,
+    pub mint_b: Address,
+    pub maker_ta_b: Address,
+    pub receive: u64,
+    pub bump: u8,
+}
+```
+
+The `#[account]` macro generates zero-copy serialization and deserialization for this struct. Let\'s break down each field:
+
+- **`discriminator = 1`** -- A unique byte prepended to the account data that identifies this as an `Escrow` account. The framework validates this on deserialization. Account discriminators and instruction discriminators occupy separate namespaces.
+- **`maker`** -- The public key of the user who created the escrow.
+- **`mint_a`** -- The token mint the maker deposited.
+- **`mint_b`** -- The token mint the maker wants to receive.
+- **`maker_ta_b`** -- The maker\'s token account for mint B, where they will receive tokens when the escrow is taken.
+- **`receive`** -- How many tokens of mint B the maker wants.
+- **`bump`** -- The PDA bump seed, stored so we can reconstruct the PDA signer seeds without re-deriving.
+
+All fields are fixed-size (`Address` is 32 bytes, `u64` is 8, `u8` is 1), so the total account size is 1 (discriminator) + 32 + 32 + 32 + 32 + 8 + 1 = 138 bytes.
+
+## Defining events
+
+Events let off-chain clients monitor what happens in your program. Define them in `events.rs`:
+
+```rust
+use quasar_lang::prelude::*;
+
+#[event(discriminator = 0)]
+pub struct MakeEvent {
+    pub escrow: Address,
+    pub maker: Address,
+    pub mint_a: Address,
+    pub mint_b: Address,
+    pub deposit: u64,
+    pub receive: u64,
+}
+
+#[event(discriminator = 1)]
+pub struct TakeEvent {
+    pub escrow: Address,
+}
+
+#[event(discriminator = 2)]
+pub struct RefundEvent {
+    pub escrow: Address,
+}
+```
+
+Each event gets a unique discriminator within the event namespace. The `#[event]` macro generates serialization code that writes the event data to the transaction log via `emit!`. For more on event patterns, see [Events](/docs/features/events).
+
+## The program entrypoint
+
+Here is the complete `lib.rs`:
+
+```rust
+#![no_std]
+
+use quasar_lang::prelude::*;
+
+mod instructions;
+use instructions::*;
+mod events;
+mod state;
+
+declare_id!("22222222222222222222222222222222222222222222");
+
+#[program]
+mod quasar_escrow {
+    use super::*;
+
+    #[instruction(discriminator = 0)]
+    pub fn make(ctx: Ctx<Make>, deposit: u64, receive: u64) -> Result<(), ProgramError> {
+        ctx.accounts.make_escrow(receive, &ctx.bumps)?;
+        ctx.accounts.emit_event(deposit, receive)?;
+        ctx.accounts.deposit_tokens(deposit)
+    }
+
+    #[instruction(discriminator = 1)]
+    pub fn take(ctx: Ctx<Take>) -> Result<(), ProgramError> {
+        ctx.accounts.transfer_tokens()?;
+        ctx.accounts.withdraw_tokens_and_close(&ctx.bumps)?;
+        ctx.accounts.emit_event()
+    }
+
+    #[instruction(discriminator = 2)]
+    pub fn refund(ctx: Ctx<Refund>) -> Result<(), ProgramError> {
+        ctx.accounts.withdraw_tokens_and_close(&ctx.bumps)?;
+        ctx.accounts.emit_event()
+    }
+}
+```
+
+The `make` instruction takes two arguments: `deposit` (how many tokens of mint A to lock up) and `receive` (how many tokens of mint B the maker wants). The `take` and `refund` instructions take no additional arguments -- all the information they need is stored in the escrow account.
+
+The `instructions/mod.rs` re-exports all three modules:
+
+```rust
+pub mod make;
+pub use make::*;
+
+pub mod take;
+pub use take::*;
+
+pub mod refund;
+pub use refund::*;
+```
+
+## The make instruction
+
+This is the largest instruction. It creates the escrow account, emits an event, and deposits tokens into the vault. Here is the full `instructions/make.rs`:
+
+```rust
+use {
+    crate::{events::MakeEvent, state::Escrow},
+    quasar_lang::prelude::*,
+    quasar_spl::{Mint, Token, TokenCpi},
+};
+
+#[derive(Accounts)]
+pub struct Make<\'info> {
+    pub maker: &\'info mut Signer,
+    #[account(init, payer = maker, seeds = [b"escrow", maker], bump)]
+    pub escrow: &\'info mut Account<Escrow>,
+    pub mint_a: &\'info Account<Mint>,
+    pub mint_b: &\'info Account<Mint>,
+    pub maker_ta_a: &\'info mut Account<Token>,
+    #[account(init_if_needed, payer = maker, token::mint = mint_b, token::authority = maker)]
+    pub maker_ta_b: &\'info mut Account<Token>,
+    #[account(init_if_needed, payer = maker, token::mint = mint_a, token::authority = escrow)]
+    pub vault_ta_a: &\'info mut Account<Token>,
+    pub rent: &\'info Sysvar<Rent>,
+    pub token_program: &\'info Program<Token>,
+    pub system_program: &\'info Program<System>,
+}
+```
+
+### Account-by-account walkthrough
+
+**`maker: &\'info mut Signer`** -- The user creating the escrow. Must sign the transaction and pays for all account creation.
+
+**`escrow: &\'info mut Account<Escrow>`** -- The escrow state account, created by this instruction:
+- `init` -- Allocates and initializes the account via a system program `create_account` CPI. The account\'s size is derived from the `Escrow` struct.
+- `payer = maker` -- The maker pays the rent.
+- `seeds = [b"escrow", maker]` -- The PDA seeds. Each maker can have one active escrow.
+- `bump` -- The derived bump seed, available as `bumps.escrow`.
+
+**`mint_a` and `mint_b`** -- The two token mints involved in the trade. `Account<Mint>` validates these are real SPL mint accounts (owned by the token program with correct data layout).
+
+**`maker_ta_a: &\'info mut Account<Token>`** -- The maker\'s token account for mint A (the tokens being deposited). Already exists and holds the maker\'s tokens.
+
+**`maker_ta_b: &\'info mut Account<Token>`** -- The maker\'s token account for mint B (where they will receive tokens):
+- `init_if_needed` -- Creates the account if it does not exist; validates it if it does. This handles the case where the maker might not have a token account for mint B yet.
+- `token::mint = mint_b` -- When creating, initializes with this mint. When validating an existing account, checks the mint matches.
+- `token::authority = maker` -- When creating, sets the authority. When validating, checks the authority matches.
+
+**`vault_ta_a: &\'info mut Account<Token>`** -- The vault token account that holds the escrowed tokens:
+- `init_if_needed` -- Same pattern as above.
+- `token::mint = mint_a` -- Must hold tokens of mint A.
+- `token::authority = escrow` -- The escrow PDA is the authority, so only the escrow (via signed CPI) can move tokens out.
+
+**`rent`, `token_program`, `system_program`** -- Required programs and sysvars for account creation and token operations.
+
+### The handler methods
+
+The `make_escrow` method writes the escrow state:
+
+```rust
+pub fn make_escrow(&mut self, receive: u64, bumps: &MakeBumps) -> Result<(), ProgramError> {
+    self.escrow.set_inner(
+        *self.maker.address(),
+        *self.mint_a.address(),
+        *self.mint_b.address(),
+        *self.maker_ta_b.address(),
+        receive,
+        bumps.escrow,
+    );
+    Ok(())
+}
+```
+
+The `set_inner` method is generated by the `#[account]` macro. It writes all fields into the account\'s data buffer in order. The `MakeBumps` struct is auto-generated by `#[derive(Accounts)]` and contains the bump seed for every PDA in the struct.
+
+The `emit_event` method logs the event:
+
+```rust
+pub fn emit_event(&self, deposit: u64, receive: u64) -> Result<(), ProgramError> {
+    emit!(MakeEvent {
+        escrow: *self.escrow.address(),
+        maker: *self.maker.address(),
+        mint_a: *self.mint_a.address(),
+        mint_b: *self.mint_b.address(),
+        deposit,
+        receive,
+    });
+    Ok(())
+}
+```
+
+The `emit!` macro serializes the event and writes it to the transaction log. Off-chain indexers can parse these logs to track escrow activity.
+
+The `deposit_tokens` method performs the SPL token transfer:
+
+```rust
+pub fn deposit_tokens(&mut self, amount: u64) -> Result<(), ProgramError> {
+    self.token_program
+        .transfer(self.maker_ta_a, self.vault_ta_a, self.maker, amount)
+        .invoke()
+}
+```
+
+This is a standard SPL token transfer CPI. The maker signs the transaction, so `.invoke()` (not `.invoke_signed()`) is sufficient. The tokens move from the maker\'s token account to the vault token account.
+
+## The take instruction
+
+When a taker wants to fulfill the trade, the `take` instruction handles the token swap and cleanup. Here is `instructions/take.rs`:
+
+```rust
+use {
+    crate::{events::TakeEvent, state::Escrow},
+    quasar_lang::prelude::*,
+    quasar_spl::{Mint, Token, TokenClose, TokenCpi},
+};
+
+#[derive(Accounts)]
+pub struct Take<\'info> {
+    pub taker: &\'info mut Signer,
+    #[account(
+        has_one = maker,
+        has_one = maker_ta_b,
+        constraint = escrow.receive > 0,
+        close = taker,
+        seeds = [b"escrow", maker],
+        bump = escrow.bump
+    )]
+    pub escrow: &\'info mut Account<Escrow>,
+    pub maker: &\'info mut UncheckedAccount,
+    pub mint_a: &\'info Account<Mint>,
+    pub mint_b: &\'info Account<Mint>,
+    #[account(init_if_needed, payer = taker, token::mint = mint_a, token::authority = taker)]
+    pub taker_ta_a: &\'info mut Account<Token>,
+    pub taker_ta_b: &\'info mut Account<Token>,
+    #[account(init_if_needed, payer = taker, token::mint = mint_b, token::authority = maker)]
+    pub maker_ta_b: &\'info mut Account<Token>,
+    pub vault_ta_a: &\'info mut Account<Token>,
+    pub rent: &\'info Sysvar<Rent>,
+    pub token_program: &\'info Program<Token>,
+    pub system_program: &\'info Program<System>,
+}
+```
+
+### Key constraints on the escrow account
+
+The escrow account has several constraints worth examining:
+
+- **`has_one = maker`** -- Checks that `escrow.maker == maker.address()`. This links the escrow to the maker account passed in the transaction.
+- **`has_one = maker_ta_b`** -- Checks that `escrow.maker_ta_b == maker_ta_b.address()`. Ensures tokens go to the right destination.
+- **`constraint = escrow.receive > 0`** -- A custom boolean constraint. The escrow must have a nonzero receive amount.
+- **`close = taker`** -- After the instruction completes, close the escrow account and send its rent-exempt lamports to the taker.
+- **`bump = escrow.bump`** -- Instead of re-deriving the bump, use the one stored in the escrow account. This saves compute units.
+
+### The handler methods
+
+The `transfer_tokens` method sends the taker\'s tokens to the maker:
+
+```rust
+pub fn transfer_tokens(&mut self) -> Result<(), ProgramError> {
+    self.token_program
+        .transfer(self.taker_ta_b, self.maker_ta_b, self.taker, self.escrow.receive)
+        .invoke()
+}
+```
+
+The taker transfers `escrow.receive` tokens of mint B from their token account to the maker\'s token account. The taker is a signer, so `.invoke()` works.
+
+The `withdraw_tokens_and_close` method moves the escrowed tokens to the taker and closes the vault:
+
+```rust
+pub fn withdraw_tokens_and_close(&mut self, bumps: &TakeBumps) -> Result<(), ProgramError> {
+    let seeds = bumps.escrow_seeds();
+
+    self.token_program
+        .transfer(self.vault_ta_a, self.taker_ta_a, self.escrow, self.vault_ta_a.amount())
+        .invoke_signed(&seeds)?;
+
+    self.vault_ta_a
+        .close(self.token_program, self.taker, self.escrow)
+        .invoke_signed(&seeds)
+}
+```
+
+This is where PDA signing comes in. The vault token account\'s authority is the escrow PDA. To move tokens out, we need to sign the CPI as the escrow PDA.
+
+`bumps.escrow_seeds()` returns the complete signer seeds for the escrow PDA (including the bump). We pass these to `.invoke_signed()`, which tells the runtime "this CPI is authorized by the escrow PDA."
+
+After transferring all tokens, we close the vault token account with `.close()`. This sends the vault token account\'s remaining lamports (rent) to the taker. Both the transfer and the close require PDA signing because the escrow PDA is the authority.
+
+For a deeper dive into CPI signing, see [Cross-Program Invocations](/docs/core-concepts/cpi).
+
+## The refund instruction
+
+If no taker has come along, the maker can cancel the escrow and get their tokens back. Here is `instructions/refund.rs`:
+
+```rust
+use {
+    crate::{events::RefundEvent, state::Escrow},
+    quasar_lang::prelude::*,
+    quasar_spl::{Mint, Token, TokenClose, TokenCpi},
+};
+
+#[derive(Accounts)]
+pub struct Refund<\'info> {
+    pub maker: &\'info mut Signer,
+    #[account(
+        has_one = maker,
+        close = maker,
+        seeds = [b"escrow", maker],
+        bump = escrow.bump
+    )]
+    pub escrow: &\'info mut Account<Escrow>,
+    pub mint_a: &\'info Account<Mint>,
+    #[account(init_if_needed, payer = maker, token::mint = mint_a, token::authority = maker)]
+    pub maker_ta_a: &\'info mut Account<Token>,
+    pub vault_ta_a: &\'info mut Account<Token>,
+    pub rent: &\'info Sysvar<Rent>,
+    pub token_program: &\'info Program<Token>,
+    pub system_program: &\'info Program<System>,
+}
+
+impl<\'info> Refund<\'info> {
+    #[inline(always)]
+    pub fn withdraw_tokens_and_close(&mut self, bumps: &RefundBumps) -> Result<(), ProgramError> {
+        let seeds = bumps.escrow_seeds();
+
+        self.token_program
+            .transfer(self.vault_ta_a, self.maker_ta_a, self.escrow, self.vault_ta_a.amount())
+            .invoke_signed(&seeds)?;
+
+        self.vault_ta_a
+            .close(self.token_program, self.maker, self.escrow)
+            .invoke_signed(&seeds)
+    }
+
+    #[inline(always)]
+    pub fn emit_event(&self) -> Result<(), ProgramError> {
+        emit!(RefundEvent {
+            escrow: *self.escrow.address(),
+        });
+        Ok(())
+    }
+}
+```
+
+The refund follows the same pattern as the take\'s withdrawal:
+
+1. Transfer all tokens from the vault back to the maker, signing as the escrow PDA.
+2. Close the vault token account, sending rent to the maker.
+3. The `close = maker` attribute on the escrow account closes it too, returning its rent to the maker.
+
+The key difference from take is that `has_one = maker` combined with `Signer` on the maker field ensures only the original maker can refund. The `close = maker` sends the escrow account\'s rent back to the maker (not the taker).
+
+## Testing
+
+The escrow tests use Mollusk with the SPL token program loaded. Add the test dependencies:
+
+```toml
+[dev-dependencies]
+mollusk-svm = "0.10.3"
+mollusk-svm-programs-token = "0.10.3"
+spl-token-interface = { version = "2.0.0" }
+solana-program-pack = { version = "3.1.0" }
+solana-account = { version = "3.4.0" }
+solana-instruction = { version = "3.2.0", features = ["bincode"] }
+```
+
+The test suite covers the happy path for all three instructions as well as edge cases including pre-existing token accounts (testing the `init_if_needed` validation path), wrong mints, and wrong token authorities.
+
+Run the full test suite with:
+
+```bash
+cargo test-sbf
+```
+
+## Summary
+
+The escrow program demonstrates several important Quasar patterns:
+
+- **Account initialization** -- `init` creates accounts with system program CPI; `init_if_needed` handles the "create or validate" pattern for token accounts.
+- **SPL token CPI** -- Type-safe token transfers and account closures through `quasar-spl`.
+- **PDA signing** -- Using `invoke_signed` with bumps from the context to authorize CPIs on behalf of a PDA.
+- **Account closure** -- The `close` attribute on account constraints reclaims rent automatically.
+- **Constraint validation** -- `has_one` links accounts together; `constraint` allows arbitrary boolean checks.
+- **Events** -- `emit!` writes structured event data to the transaction log.
+
+The complete source code is available in the [Quasar repository](https://github.com/quasar-lab/quasar/tree/master/examples/escrow).
+
+## Next steps
+
+- [Build a Multisig](/docs/guides/build-a-multisig) -- dynamic accounts with `String` and `Vec` fields, remaining accounts, and threshold-based authorization.
+- [Cross-Program Invocations](/docs/core-concepts/cpi) -- deep dive into stack-allocated CPI.
+- [Events](/docs/features/events) -- event emission patterns including `emit_cpi!` for self-CPI events.
+- [Program Derived Addresses](/docs/core-concepts/pda) -- PDA derivation, seeds, and bump management.
