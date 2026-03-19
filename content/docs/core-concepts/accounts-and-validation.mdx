@@ -1,6 +1,304 @@
 ---
 title: Accounts and Validation
-description: Defining account structs with constraints, ownership, and signer checks.
+description: Defining account structs with constraints, ownership, and signer checks — the complete reference for Quasar's account types and validation attributes.
 ---
 
-Content coming soon.
+Accounts are the fundamental building block of Solana programs. Quasar provides a set of zero-copy account wrapper types and a `#[derive(Accounts)]` macro that generates all parsing and validation code at compile time. This page covers every account type, the `#[account]` macro for defining your own data types, and the complete set of validation attributes.
+
+## Account Types
+
+Quasar provides several built-in account types, each enforcing different validation rules during parsing. All types are `#[repr(transparent)]` wrappers over `AccountView`, which means they are constructed via zero-cost pointer casts -- no heap allocation or data copying.
+
+### `Account<T>`
+
+The primary type for program-owned data accounts. Validates that the account's owner matches `T::OWNER` and that the discriminator matches `T::DISCRIMINATOR`. Provides `Deref`/`DerefMut` to the inner zero-copy type for direct field access.
+
+```rust
+#[derive(Accounts)]
+pub struct Deposit<'info> {
+    #[account(mut, has_one = authority)]
+    pub vault: &'info mut Account<Vault>,
+    pub authority: &'info Signer,
+}
+```
+
+### `Signer`
+
+An account that must have the `is_signer` flag set. Does not check owner, data, or any other property.
+
+```rust
+pub maker: &'info mut Signer,
+```
+
+### `UncheckedAccount`
+
+An account with no validation at all. Useful for accounts passed through to CPI calls or whose constraints are checked manually in the instruction handler.
+
+```rust
+#[account(mut, seeds = [b"vault", user], bump)]
+pub vault: &'info mut UncheckedAccount,
+```
+
+### `SystemAccount`
+
+An account owned by the System program (the all-zeros address). Used for SOL-holding accounts that have no program data.
+
+```rust
+pub destination: &'info SystemAccount,
+```
+
+### `Program<T>`
+
+A wrapper for executable program accounts. Validates the executable flag and that the address matches `T::ID`. The type parameter `T` must implement the `Id` trait.
+
+```rust
+pub token_program: &'info Program<Token>,
+pub system_program: &'info Program<System>,
+```
+
+### `Interface<T>`
+
+Like `Program<T>`, but validates against multiple allowed addresses via the `ProgramInterface` trait. Useful when an instruction supports both Token and Token-2022.
+
+```rust
+pub token_program: &'info Interface<TokenProgramInterface>,
+```
+
+### `Sysvar<T>`
+
+Wraps a sysvar account and validates the address matches the expected sysvar ID. Provides `Deref` to the inner sysvar type for zero-copy field access.
+
+```rust
+pub rent: &'info Sysvar<Rent>,
+```
+
+### Optional Accounts
+
+Any account type can be wrapped in `Option` to make it optional. If the account at that position is the System program (all-zero address), it is treated as `None`.
+
+```rust
+pub optional_authority: Option<&'info Signer>,
+```
+
+## Mutability
+
+Account references use Rust's standard `&` and `&mut` semantics:
+
+- `&'info Account<T>` -- read-only access, the account does not need the writable flag
+- `&'info mut Account<T>` -- mutable access, the account must be writable
+
+The framework validates the writable flag during account parsing. If an account is declared as `&mut` but was not passed as writable in the transaction, parsing fails with `ProgramError::Immutable`.
+
+## The `#[account]` Macro
+
+The `#[account]` macro transforms a struct into a zero-copy account type. It generates a `#[repr(C)]` companion struct (the "ZC struct"), discriminator validation, owner checks, and typed accessors.
+
+### Static Accounts
+
+For accounts with only fixed-size fields, the macro generates a `#[repr(transparent)]` view type that can be constructed via pointer cast from raw account data:
+
+```rust
+#[account(discriminator = 1)]
+pub struct Escrow {
+    pub maker: Address,
+    pub mint_a: Address,
+    pub mint_b: Address,
+    pub maker_ta_b: Address,
+    pub receive: u64,
+    pub bump: u8,
+}
+```
+
+This generates:
+- A `#[repr(C)]` companion struct `EscrowZc` with Pod-typed fields (alignment 1)
+- `Discriminator` impl with `DISCRIMINATOR = &[1]`
+- `Owner` impl with `OWNER = crate::ID`
+- `Space` impl computing the total size (discriminator + data)
+- `AccountCheck` impl that validates discriminator bytes
+- `StaticView` impl marking the type as safe for pointer cast
+- `set_inner()` method for initializing all fields at once
+
+### Dynamic Accounts
+
+Accounts can contain variable-length fields using `String<'a, MAX>` and `Vec<'a, T, MAX>`:
+
+```rust
+#[account(discriminator = 1)]
+pub struct MultisigConfig<'a> {
+    pub creator: Address,
+    pub threshold: u8,
+    pub bump: u8,
+    pub label: String<'a, 32>,
+    pub signers: Vec<'a, Address, 10>,
+}
+```
+
+Dynamic accounts have a more complex layout:
+1. Discriminator bytes
+2. Fixed-size ZC header (containing `creator`, `threshold`, `bump`)
+3. Length-prefixed dynamic fields (`label`, `signers`)
+
+The generated view type caches byte offsets during parsing for O(1) field access. Each dynamic field gets:
+- A getter (e.g., `label() -> &str`, `signers() -> &[Address]`)
+- A raw accessor (`label_raw()`) for CPI pass-through
+- A setter (`set_label(&mut self, payer, value)`) that handles reallocation
+- For Vec fields, a mutable accessor (`signers_mut() -> &mut [Address]`)
+
+### Discriminator Rules
+
+Discriminators are developer-specified integers, not sha256-derived hashes. The following rules apply:
+
+- **All-zero discriminators are banned at compile time.** Since uninitialized account data is all zeros, this prevents accidentally treating empty accounts as valid.
+- **Discriminators starting with 0xFF are banned.** The byte `0xFF` is reserved for the event protocol.
+- Discriminator values can be any length (1 byte, 2 bytes, etc.), but all accounts within a program should use consistent lengths for clarity.
+
+## `#[derive(Accounts)]` Attributes
+
+The `#[derive(Accounts)]` macro processes field-level `#[account(...)]` attributes to generate validation code. Here is the complete reference.
+
+### Core Attributes
+
+| Attribute | Description |
+|-----------|-------------|
+| `mut` | Account must be writable. Implied by `init`, `close`, and `realloc`. |
+| `signer` | Account must be a transaction signer. Automatically inferred for `Signer` types. |
+| `dup` | Allow this account to be a duplicate of a previous account in the list. By default, Quasar requires all accounts to be distinct (non-borrowed). |
+
+### Initialization
+
+| Attribute | Description |
+|-----------|-------------|
+| `init` | Create the account via CPI to the System program. Requires `payer` and either `space` or auto-computed space. |
+| `init_if_needed` | Create the account only if it does not already exist. The account must be writable and have a payer. |
+| `payer = <field>` | The account that pays for rent when initializing. Must reference another field in the struct. |
+| `space = <expr>` | Override the auto-computed space for `init`. |
+
+Example from the escrow:
+
+```rust
+#[account(init, payer = maker, seeds = [b"escrow", maker], bump)]
+pub escrow: &'info mut Account<Escrow>,
+```
+
+### PDA Seeds and Bumps
+
+| Attribute | Description |
+|-----------|-------------|
+| `seeds = [expr, ...]` | PDA seed expressions. Account field references are automatically converted to their address bytes. |
+| `bump` | Find the bump seed via `try_find_program_address`. The discovered bump is stored in the `Bumps` struct. |
+| `bump = <expr>` | Use a known bump value (e.g., `bump = escrow.bump`). Verifies the PDA address instead of searching. |
+
+When `seeds` and `bump` are used together, the macro generates PDA verification code. See [Program Derived Addresses](./pda) for details.
+
+### Ownership and Address Checks
+
+| Attribute | Description |
+|-----------|-------------|
+| `address = <expr>` | Validate that the account's address matches the given expression. |
+| `has_one = <field>` | Validate that a field stored in the account data matches the address of another account in the struct. |
+| `constraint = <expr>` | Arbitrary boolean constraint evaluated after account construction. |
+
+### Custom Error Syntax
+
+Both `has_one`, `constraint`, and `address` support a custom error variant using the `@` syntax:
+
+```rust
+#[account(
+    has_one = maker @ MyError::InvalidMaker,
+    constraint = escrow.receive > 0 @ MyError::ZeroReceiveAmount,
+    address = EXPECTED_ADDRESS @ MyError::WrongAddress,
+)]
+pub escrow: &'info mut Account<Escrow>,
+```
+
+Without the `@` annotation, these checks return the framework's default errors (`HasOneMismatch`, `ConstraintViolation`, `AddressMismatch`).
+
+### Closing Accounts
+
+| Attribute | Description |
+|-----------|-------------|
+| `close = <field>` | Close this account after the instruction executes. Zeros the discriminator, drains lamports to the destination, reassigns to the System program, and resizes to zero. |
+
+The close operation happens in the epilogue (after the instruction handler returns). This is important: you can still read the account's data during instruction execution, and it will be closed afterward.
+
+```rust
+#[account(close = taker, seeds = [b"escrow", maker], bump = escrow.bump)]
+pub escrow: &'info mut Account<Escrow>,
+```
+
+### Reallocation
+
+| Attribute | Description |
+|-----------|-------------|
+| `realloc = <expr>` | Resize the account to the given number of bytes. Adjusts lamports for rent exemption. |
+| `realloc::payer = <field>` | The account that pays for (or receives refunds from) the resize. |
+
+### Token and Mint Attributes
+
+Quasar SPL integration provides specialized attributes for token accounts:
+
+| Attribute | Description |
+|-----------|-------------|
+| `token::mint = <field>` | Validate (or initialize) the token account's mint. |
+| `token::authority = <field>` | Validate (or initialize) the token account's authority. |
+| `associated_token::mint = <field>` | For associated token account derivation. |
+| `associated_token::authority = <field>` | For associated token account derivation. |
+| `associated_token::token_program = <field>` | Specify which token program to use. |
+| `mint::decimals = <expr>` | Set mint decimals during initialization. |
+| `mint::authority = <field>` | Set mint authority during initialization. |
+| `mint::freeze_authority = <field>` | Set freeze authority during initialization. |
+
+## The Bumps Struct
+
+When an accounts struct contains PDA-validated fields with `seeds` and `bump`, the `#[derive(Accounts)]` macro generates a companion `Bumps` struct. For a struct named `Take`, the bumps struct is `TakeBumps`.
+
+The bumps struct contains one `u8` field for each PDA-validated account, named after that account field. It also generates `*_seeds()` methods that return the complete seed array including the bump, ready for use in CPI signing:
+
+```rust
+// Generated by #[derive(Accounts)] for Take
+pub struct TakeBumps {
+    pub escrow: u8,
+}
+
+impl TakeBumps {
+    pub fn escrow_seeds(&self) -> [Seed; 3] {
+        // Returns [b"escrow", maker_address, &[bump]]
+    }
+}
+```
+
+Usage in an instruction handler:
+
+```rust
+pub fn withdraw_tokens_and_close(&mut self, bumps: &TakeBumps) -> Result<(), ProgramError> {
+    let seeds = bumps.escrow_seeds();
+
+    self.token_program
+        .transfer(self.vault_ta_a, self.taker_ta_a, self.escrow, self.vault_ta_a.amount())
+        .invoke_signed(&seeds)?;
+
+    self.vault_ta_a
+        .close(self.token_program, self.taker, self.escrow)
+        .invoke_signed(&seeds)
+}
+```
+
+## Account Parsing Pipeline
+
+Understanding the parsing pipeline helps when debugging. When an instruction is invoked:
+
+1. **Raw buffer walk**: `parse_accounts` walks the SVM input buffer, reading each account's 4-byte header (`[borrow_state, is_signer, is_writable, executable]`) as a single `u32` comparison against the expected value. This catches missing signatures, non-writable accounts, and duplicate accounts in a single instruction.
+
+2. **Typed construction**: Each field is constructed from its `AccountView` via pointer cast (for static types) or offset-cached parsing (for dynamic types).
+
+3. **Constraint evaluation**: After all accounts are constructed, `has_one`, `constraint`, `address`, and PDA checks run in order.
+
+4. **Initialization**: If any `init` or `init_if_needed` accounts need creation, CPI calls to the System program (and optionally the Token program) happen at this stage.
+
+5. **Epilogue**: After the instruction handler returns, `close` operations execute.
+
+## Next Steps
+
+- [Instructions](./instructions) -- how instruction arguments are deserialized
+- [Program Derived Addresses](./pda) -- PDA seeds, bumps, and verification
+- [Cross-Program Invocations](./cpi) -- using accounts in CPI calls
