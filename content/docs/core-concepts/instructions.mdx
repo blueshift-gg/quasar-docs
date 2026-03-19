@@ -1,6 +1,206 @@
 ---
 title: Instructions
-description: How to define and implement instruction handlers in Quasar.
+description: How to define instruction handlers in Quasar — discriminators, zero-copy argument deserialization, return data, and dispatch routing.
 ---
 
-Content coming soon.
+Instructions are the entry points into your Solana program. Quasar's `#[instruction]` macro generates the dispatch routing, discriminator validation, and argument deserialization for each handler. This page covers how instructions work under the hood, how arguments are deserialized from the wire format, and how return data flows back to the caller.
+
+## Defining an Instruction
+
+Each instruction is a function annotated with `#[instruction(discriminator = N)]` inside a `#[program]` module:
+
+```rust
+#[program]
+mod quasar_vault {
+    use super::*;
+
+    #[instruction(discriminator = 0)]
+    pub fn deposit(ctx: Ctx<Deposit>, amount: u64) -> Result<(), ProgramError> {
+        ctx.accounts.deposit(amount)
+    }
+
+    #[instruction(discriminator = 1)]
+    pub fn withdraw(ctx: Ctx<Withdraw>, amount: u64) -> Result<(), ProgramError> {
+        ctx.accounts.withdraw(amount)
+    }
+}
+```
+
+Each instruction function must:
+
+1. Have `ctx: Ctx<T>` or `ctx: CtxWithRemaining<T>` as its first parameter, where `T` is a type that implements `ParseAccounts`.
+2. Specify a `discriminator` value in the attribute.
+3. Return `Result<(), ProgramError>` (or `Result<T, ProgramError>` for return data -- see below).
+
+## Discriminators
+
+The discriminator is a byte prefix that identifies which instruction to invoke. Unlike some frameworks that derive discriminators from function name hashes, Quasar uses **developer-specified integers**. This gives you full control and makes the wire format predictable.
+
+```rust
+#[instruction(discriminator = 0)]    // instruction data starts with [0x00]
+pub fn deposit(...) -> Result<(), ProgramError> { ... }
+
+#[instruction(discriminator = 1)]    // instruction data starts with [0x01]
+pub fn withdraw(...) -> Result<(), ProgramError> { ... }
+```
+
+### Discriminator Rules
+
+- **Same length**: All discriminators in a program must have the same byte length. A single-byte discriminator like `0` gives you 255 possible instructions (0x00 through 0xFE).
+- **No duplicates**: The macro checks for duplicate discriminator values at compile time.
+- **No 0xFF prefix**: The byte `0xFF` is reserved for the event self-CPI protocol. Any discriminator starting with `0xFF` produces a compile error.
+- **Multi-byte discriminators**: For programs that need more than 255 instructions, you can use multi-byte discriminators with array syntax: `discriminator = [0, 1]`.
+
+### Dispatch Routing
+
+When an instruction arrives, the generated `__dispatch` function:
+
+1. Checks if the first byte is `0xFF` (event CPI) and routes accordingly.
+2. Reads the discriminator prefix from the instruction data.
+3. Matches it against the compile-time dispatch table.
+4. Calls the corresponding handler function.
+
+If no discriminator matches, the dispatch returns `ProgramError::InvalidInstructionData`.
+
+## Argument Deserialization
+
+After the discriminator prefix, the remaining instruction data contains the function arguments. Quasar deserializes these using zero-copy pointer casts for fixed-size types and inline prefix reads for dynamic types.
+
+### Fixed-Size Arguments
+
+Fixed-size arguments (integers, `Address`, booleans) are mapped to Pod types with alignment 1 and read via a `#[repr(C)]` struct pointer cast:
+
+```rust
+#[instruction(discriminator = 0)]
+pub fn deposit(ctx: Ctx<Deposit>, amount: u64) -> Result<(), ProgramError> {
+    ctx.accounts.deposit(amount)
+}
+```
+
+The generated code creates an internal struct:
+
+```rust
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct InstructionDataZc {
+    amount: u64,  // Pod type, alignment 1
+}
+```
+
+A compile-time assertion ensures the struct has alignment 1. The instruction data buffer is then cast to a pointer to this struct, and fields are extracted without copying.
+
+### Dynamic Arguments
+
+Dynamic arguments use length-prefixed encoding on the wire. Quasar supports `String<N>` (with a length prefix and max length) and `Vec<T, N>`:
+
+```rust
+#[instruction(discriminator = 2)]
+pub fn set_label(ctx: Ctx<SetLabel>, label: String<32>) -> Result<(), ProgramError> {
+    ctx.accounts.update_label(label)
+}
+```
+
+For `String<MAX>`, the generated deserialization:
+1. Reads the length prefix (1 or 2 bytes depending on the max length).
+2. Validates the length does not exceed `MAX`.
+3. Validates UTF-8 encoding.
+4. Produces a `&str` reference pointing directly into the instruction data buffer.
+
+For `Vec<T, MAX>`, the process is similar but produces a `&[T]` slice. Vec element types must have alignment 1, enforced by a compile-time assertion.
+
+### Tail Arguments
+
+A tail argument consumes all remaining instruction data after fixed and prefixed fields:
+
+```rust
+#[instruction(discriminator = 0)]
+pub fn process(ctx: Ctx<Process>, data: Tail<[u8]>) -> Result<(), ProgramError> {
+    // data is a &[u8] of the remaining instruction bytes
+}
+```
+
+Only one tail argument is allowed per instruction, and it must be the last parameter.
+
+### Wire Format Summary
+
+The instruction data layout for `deposit(ctx, amount: u64)` with `discriminator = 0`:
+
+```text
+[0x00]                    <- discriminator (1 byte)
+[amount: 8 bytes LE]      <- u64 argument
+```
+
+For `set_label(ctx, label: String<32>)` with `discriminator = 2`:
+
+```text
+[0x02]                         <- discriminator (1 byte)
+[len: 1 byte]                  <- string length prefix
+[label: len bytes UTF-8]       <- string data
+```
+
+## Context Types
+
+### `Ctx<T>`
+
+The standard instruction context. Contains:
+
+- `accounts: T` -- the validated, typed accounts struct
+- `bumps: T::Bumps` -- PDA bump seeds discovered during validation
+- `program_id: &[u8; 32]` -- the 32-byte program ID
+- `data: &[u8]` -- instruction data with discriminator already consumed
+
+```rust
+pub fn make(ctx: Ctx<Make>, deposit: u64, receive: u64) -> Result<(), ProgramError> {
+    ctx.accounts.make_escrow(receive, &ctx.bumps)?;
+    ctx.accounts.deposit_tokens(deposit)
+}
+```
+
+### `CtxWithRemaining<T>`
+
+Like `Ctx<T>` but also captures the remaining accounts region. Use this for instructions that forward accounts to CPIs:
+
+```rust
+pub fn create(ctx: CtxWithRemaining<Create>, threshold: u8) -> Result<(), ProgramError> {
+    ctx.accounts.create_multisig(threshold, &ctx.bumps, ctx.remaining_accounts())
+}
+```
+
+The `remaining_accounts()` method returns a `RemainingAccounts` iterator that walks the SVM input buffer past the declared accounts.
+
+## Return Data
+
+Instructions can return data to the caller using `sol_set_return_data`. Change your return type to `Result<T, ProgramError>` where `T` is a fixed-size Pod type:
+
+```rust
+#[instruction(discriminator = 0)]
+pub fn compute_value(ctx: Ctx<Compute>) -> Result<PodU64, ProgramError> {
+    Ok(PodU64::from(42u64))
+}
+```
+
+The return type must have alignment 1 (Pod types). A compile-time assertion enforces this.
+
+## Instruction Data Access in Account Validation
+
+The `#[instruction(...)]` attribute on an accounts struct allows access to instruction arguments during account parsing:
+
+```rust
+#[derive(Accounts)]
+#[instruction(name: String<32>, symbol: String<10>)]
+pub struct CreateNft<'info> {
+    #[account(init, payer = authority, metadata::name = name, metadata::symbol = symbol)]
+    pub metadata: &'info mut Account<Metadata>,
+    pub authority: &'info mut Signer,
+}
+```
+
+## Epilogue
+
+After the instruction handler returns, the framework runs an epilogue that closes any accounts marked with `close = destination`.
+
+## Next Steps
+
+- [Accounts and Validation](./accounts-and-validation) -- the full attribute reference for `#[derive(Accounts)]`
+- [Program Derived Addresses](./pda) -- how seeds and bumps work
+- [IDL](./idl) -- how instruction signatures map to the generated IDL
