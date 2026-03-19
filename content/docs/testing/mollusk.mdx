@@ -1,6 +1,254 @@
 ---
 title: Mollusk
-description: Using the Mollusk testing framework with Quasar programs.
+description: Instruction-level testing with the Mollusk SVM harness.
 ---
 
-Content coming soon.
+[Mollusk](https://github.com/buffalojoec/mollusk) is a lightweight SVM test harness that processes individual instructions in isolation. It is the testing framework used internally by the Quasar test suite and is ideal for unit testing individual instructions without the overhead of full transaction processing.
+
+## Setup
+
+Add these dev-dependencies to your `Cargo.toml`:
+
+```toml
+[dev-dependencies]
+mollusk-svm = "0.10.3"
+solana-account = { version = "3.4.0" }
+solana-address = { version = "2.2.0", features = ["decode"] }
+solana-instruction = { version = "3.2.0", features = ["bincode"] }
+```
+
+Or run `quasar init` and select **Mollusk** when prompted for a testing framework.
+
+You also need the auto-generated client crate for instruction building:
+
+```toml
+[dev-dependencies]
+my-program-client = { path = "target/client/rust/my-program-client" }
+```
+
+## Creating a Mollusk Instance
+
+Point Mollusk at your program ID and compiled binary:
+
+```rust
+use mollusk_svm::Mollusk;
+
+fn setup() -> Mollusk {
+    Mollusk::new(&crate::ID, "target/deploy/my_program")
+}
+```
+
+The second argument is the path to the `.so` file, without the extension. Mollusk loads the binary and creates an isolated SVM environment for testing.
+
+## Processing Instructions
+
+The core API is `process_instruction`. You pass an `Instruction` and a slice of `(Address, Account)` tuples representing the accounts the instruction will access:
+
+```rust
+use mollusk_svm::{result::ProgramResult as MolluskResult, Mollusk};
+use solana_account::Account;
+use solana_address::Address;
+use solana_instruction::Instruction;
+
+use my_program_client::InitializeInstruction;
+
+#[test]
+fn test_initialize() {
+    let mollusk = setup();
+
+    let payer = Address::new_unique();
+    let payer_account = Account::new(10_000_000_000, 0, &Address::default());
+
+    let instruction: Instruction = InitializeInstruction {
+        payer,
+        system_program: Address::default(),
+    }
+    .into();
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[
+            (payer, payer_account),
+            (Address::default(), Account::new(1, 0, &Address::default())),
+        ],
+    );
+
+    assert!(result.program_result.is_ok());
+}
+```
+
+The generated client types (like `InitializeInstruction`) implement `Into<Instruction>`, so you can convert them directly. The client automatically sets the correct discriminator, account metas (signer/writable flags), and serialized instruction data.
+
+## Asserting on Results
+
+The `result` from `process_instruction` contains:
+
+- **`program_result`** -- `MolluskResult::Success` or `MolluskResult::Failure(ProgramError)`
+- **`resulting_accounts`** -- Updated `(Address, Account)` tuples after execution
+- **`compute_units_consumed`** -- Number of compute units used
+
+### Checking Success
+
+```rust
+assert!(result.program_result.is_ok());
+```
+
+### Checking Specific Errors
+
+```rust
+use quasar_lang::prelude::ProgramError;
+
+assert_eq!(
+    result.program_result,
+    MolluskResult::Failure(ProgramError::IllegalOwner)
+);
+```
+
+Common Quasar error codes you can assert against:
+
+| Error | Code | Meaning |
+|-------|------|---------|
+| `ProgramError::IllegalOwner` | -- | Account not owned by expected program |
+| `ProgramError::InvalidAccountData` | -- | Wrong discriminator or not executable |
+| `ProgramError::AccountDataTooSmall` | -- | Account data shorter than expected |
+| `ProgramError::MissingRequiredSignature` | -- | Signer flag not set |
+| `ProgramError::Immutable` | -- | Writable flag not set on a `mut` account |
+| `ProgramError::AccountBorrowFailed` | -- | Duplicate accounts where not allowed |
+| `ProgramError::Custom(3004)` | 3004 | `QuasarError::ConstraintViolation` |
+| `ProgramError::Custom(3005)` | 3005 | `QuasarError::HasOneMismatch` |
+| `ProgramError::Custom(3012)` | 3012 | `QuasarError::AddressMismatch` |
+
+### Inspecting Account State
+
+After execution, read the modified account data:
+
+```rust
+let result = mollusk.process_instruction(&instruction, &accounts);
+assert!(result.program_result.is_ok());
+
+let data = &result.resulting_accounts[0].1.data;
+let value = u64::from_le_bytes(data[33..41].try_into().unwrap());
+assert_eq!(value, 999);
+```
+
+### Checking Compute Units
+
+```rust
+println!("CU consumed: {}", result.compute_units_consumed);
+assert!(result.compute_units_consumed < 5_000);
+```
+
+## Multi-Step Testing
+
+Feed resulting accounts from one instruction into the next to test multi-step flows:
+
+```rust
+#[test]
+fn test_deposit_then_withdraw() {
+    let mollusk = setup();
+    let (system_program, system_program_account) =
+        mollusk_svm::program::keyed_account_for_system_program();
+
+    let user = Address::new_unique();
+    let user_account = Account::new(10_000_000_000, 0, &system_program);
+
+    let (vault, _bump) =
+        Address::find_program_address(&[b"vault", user.as_ref()], &crate::ID);
+    let vault_account = Account::new(0, 0, &system_program);
+
+    // Step 1: Deposit
+    let deposit_ix: Instruction = DepositInstruction {
+        user, vault, system_program, amount: 1_000_000_000,
+    }.into();
+
+    let result = mollusk.process_instruction(
+        &deposit_ix,
+        &[
+            (user, user_account),
+            (vault, vault_account),
+            (system_program, system_program_account),
+        ],
+    );
+    assert!(result.program_result.is_ok());
+
+    let user_after = result.resulting_accounts[0].1.clone();
+    let vault_after = result.resulting_accounts[1].1.clone();
+
+    // Step 2: Withdraw
+    let withdraw_ix: Instruction = WithdrawInstruction {
+        user, vault, amount: 500_000_000,
+    }.into();
+
+    let result = mollusk.process_instruction(
+        &withdraw_ix,
+        &[(user, user_after), (vault, vault_after)],
+    );
+    assert!(result.program_result.is_ok());
+
+    let vault_final = result.resulting_accounts[1].1.lamports;
+    assert_eq!(vault_final, 500_000_000);
+}
+```
+
+## Building Account Data Manually
+
+For testing validation logic, you may need to construct raw account data to simulate specific states:
+
+```rust
+const ACCOUNT_SIZE: usize = 41; // 1 discriminator + 32 authority + 8 value
+
+fn build_account_data(authority: Address, value: u64) -> Vec<u8> {
+    let mut data = vec![0u8; ACCOUNT_SIZE];
+    data[0] = 1; // discriminator
+    data[1..33].copy_from_slice(authority.as_ref());
+    data[33..41].copy_from_slice(&value.to_le_bytes());
+    data
+}
+
+#[test]
+fn test_wrong_owner_rejected() {
+    let mollusk = setup();
+    let account_addr = Address::new_unique();
+    let wrong_owner = Address::new_unique();
+    let data = build_account_data(Address::new_unique(), 42);
+
+    let instruction: Instruction = AccountCheckInstruction {
+        account: account_addr,
+    }.into();
+
+    let result = mollusk.process_instruction(
+        &instruction,
+        &[(
+            account_addr,
+            Account {
+                lamports: 1_000_000,
+                data,
+                owner: wrong_owner, // Not the program
+                executable: false,
+                rent_epoch: 0,
+            },
+        )],
+    );
+
+    assert_eq!(
+        result.program_result,
+        MolluskResult::Failure(ProgramError::IllegalOwner)
+    );
+}
+```
+
+## When to Use Mollusk vs QuasarSVM
+
+| | Mollusk | QuasarSVM |
+|---|---------|-----------|
+| **Scope** | Single instruction | Full transactions |
+| **Speed** | Fastest | Fast |
+| **API** | `process_instruction` | `process_transaction` |
+| **Best for** | Unit tests, validation checks, error paths | Integration tests, multi-instruction flows |
+| **System programs** | Manual setup with `keyed_account_for_system_program()` | `.addSystemProgram()` builder |
+
+**Use Mollusk when** you want to test individual instructions in isolation -- verifying account validation, constraint checks, error codes, and single-instruction logic. Mollusk is the fastest option and gives you the most control over account state.
+
+**Use QuasarSVM when** you need to test transaction-level behavior, multi-instruction flows, or when you want a higher-level API that more closely mirrors on-chain execution.
+
+Both harnesses are available from Rust. For TypeScript tests, use the QuasarSVM TypeScript bindings instead.

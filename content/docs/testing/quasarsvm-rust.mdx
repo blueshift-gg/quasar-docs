@@ -3,4 +3,243 @@ title: QuasarSVM (Rust)
 description: Testing Quasar programs with the Rust-based QuasarSVM test harness.
 ---
 
-Content coming soon.
+QuasarSVM is a lightweight Solana VM harness built for Quasar. It lets you deploy programs, send transactions, inspect account state, and check compute unit usage -- all from Rust, without starting a validator.
+
+## Setup
+
+Add these dev-dependencies to your `Cargo.toml`:
+
+```toml
+[dev-dependencies]
+quasar-svm = { git = "https://github.com/blueshift-gg/quasar-svm" }
+solana-account = { version = "3.4.0" }
+solana-address = { version = "2.2.0", features = ["decode"] }
+solana-instruction = { version = "3.2.0", features = ["bincode"] }
+solana-pubkey = { version = "4.1.0" }
+```
+
+Or run `quasar init` and select **QuasarSVM/Rust** when prompted for a testing framework. The scaffolder sets up everything automatically.
+
+Your `lib.rs` should include the test module:
+
+```rust
+#[cfg(test)]
+mod tests;
+```
+
+## Deploying Programs
+
+Create a `QuasarSvm` instance and load your compiled `.so` binary:
+
+```rust
+use quasar_svm::{Account, ExecutionStatus, Instruction, Pubkey, QuasarSvm};
+use solana_address::Address;
+
+fn setup() -> QuasarSvm {
+    let elf = include_bytes!("../target/deploy/my_program.so");
+    QuasarSvm::new()
+        .with_program(&Pubkey::from(crate::ID), elf)
+}
+```
+
+`include_bytes!` embeds the program binary at compile time. Make sure to run `quasar build` before running tests so the `.so` file exists.
+
+## Sending Transactions
+
+Build instructions using the auto-generated client types, then call `process_transaction`:
+
+```rust
+use my_program_client::InitializeInstruction;
+
+#[test]
+fn test_initialize() {
+    let mut svm = setup();
+
+    let payer = Pubkey::new_unique();
+    let system_program = quasar_svm::system_program::ID;
+
+    let instruction: Instruction = InitializeInstruction {
+        payer: Address::from(payer.to_bytes()),
+        system_program: Address::from(system_program.to_bytes()),
+    }
+    .into();
+
+    let result = svm.process_transaction(
+        &[instruction],
+        &[(payer, Account::new(10_000_000_000, 0, &system_program))],
+    );
+
+    match result.status() {
+        ExecutionStatus::Success => {},
+        ExecutionStatus::Err(e) => panic!("initialize failed: {e}\n{:?}", result.logs),
+    }
+}
+```
+
+The second argument to `process_transaction` is a slice of `(Pubkey, Account)` tuples that seed the VM with initial account state. Accounts not listed here default to empty system-owned accounts.
+
+## Account State Inspection
+
+After processing a transaction, the result contains the modified account state. You can inspect lamports, data, and owner:
+
+```rust
+let user_after = result.resulting_accounts[0].1.lamports;
+let vault_after = result.resulting_accounts[1].1.lamports;
+
+assert_eq!(user_after, 10_000_000_000 - deposit_amount);
+assert_eq!(vault_after, deposit_amount);
+```
+
+Accounts in `resulting_accounts` are ordered the same way they were passed in the instruction's account list.
+
+## Multi-Step Transactions
+
+Chain multiple instructions by feeding the resulting accounts from one transaction into the next:
+
+```rust
+// Step 1: Deposit
+let deposit_result = svm.process_transaction(
+    &[deposit_ix],
+    &[(user, user_account), (vault, vault_account)],
+);
+assert!(matches!(deposit_result.status(), ExecutionStatus::Success));
+
+let user_after_deposit = deposit_result.resulting_accounts[0].1.clone();
+let vault_after_deposit = deposit_result.resulting_accounts[1].1.clone();
+
+// Step 2: Withdraw using updated state
+let withdraw_result = svm.process_transaction(
+    &[withdraw_ix],
+    &[(user, user_after_deposit), (vault, vault_after_deposit)],
+);
+assert!(matches!(withdraw_result.status(), ExecutionStatus::Success));
+```
+
+## Compute Budget Testing
+
+The transaction result includes the compute units consumed, so you can assert that your instruction stays within budget or track CU regressions:
+
+```rust
+let result = svm.process_transaction(&[instruction], &accounts);
+
+println!("CU consumed: {}", result.compute_units_consumed);
+assert!(result.compute_units_consumed < 5_000, "CU budget exceeded");
+```
+
+## Full Example: Vault Program
+
+This is a complete test file for the [vault example program](/docs/getting-started/quick-start), testing both deposit and withdraw flows:
+
+```rust
+extern crate std;
+
+use quasar_svm::{Account, ExecutionStatus, Instruction, Pubkey, QuasarSvm};
+use solana_address::Address;
+
+use my_vault_client::{DepositInstruction, WithdrawInstruction};
+
+fn setup() -> QuasarSvm {
+    let elf = include_bytes!("../target/deploy/my_vault.so");
+    QuasarSvm::new()
+        .with_program(&Pubkey::from(crate::ID), elf)
+}
+
+#[test]
+fn test_deposit() {
+    let mut svm = setup();
+
+    let user = Pubkey::new_unique();
+    let system_program = quasar_svm::system_program::ID;
+
+    let (vault, _bump) = Address::find_program_address(
+        &[b"vault", Address::from(user.to_bytes()).as_ref()],
+        &crate::ID,
+    );
+
+    let instruction: Instruction = DepositInstruction {
+        user: Address::from(user.to_bytes()),
+        vault,
+        system_program: Address::from(system_program.to_bytes()),
+        amount: 1_000_000_000,
+    }
+    .into();
+
+    let result = svm.process_transaction(
+        &[instruction],
+        &[(user, Account::new(10_000_000_000, 0, &system_program))],
+    );
+
+    match result.status() {
+        ExecutionStatus::Success => {},
+        ExecutionStatus::Err(e) => panic!("deposit failed: {e}"),
+    }
+}
+
+#[test]
+fn test_withdraw() {
+    let mut svm = setup();
+
+    let user = Pubkey::new_unique();
+    let system_program = quasar_svm::system_program::ID;
+
+    let (vault, _bump) = Address::find_program_address(
+        &[b"vault", Address::from(user.to_bytes()).as_ref()],
+        &crate::ID,
+    );
+
+    // Deposit first
+    let deposit_ix: Instruction = DepositInstruction {
+        user: Address::from(user.to_bytes()),
+        vault,
+        system_program: Address::from(system_program.to_bytes()),
+        amount: 1_000_000_000,
+    }
+    .into();
+
+    let deposit_result = svm.process_transaction(
+        &[deposit_ix],
+        &[(user, Account::new(10_000_000_000, 0, &system_program))],
+    );
+
+    let user_after = deposit_result.resulting_accounts[0].1.clone();
+    let vault_after = deposit_result.resulting_accounts[1].1.clone();
+
+    // Now withdraw half
+    let withdraw_ix: Instruction = WithdrawInstruction {
+        user: Address::from(user.to_bytes()),
+        vault,
+        amount: 500_000_000,
+    }
+    .into();
+
+    let result = svm.process_transaction(
+        &[withdraw_ix],
+        &[(user, user_after), (vault, vault_after)],
+    );
+
+    match result.status() {
+        ExecutionStatus::Success => {},
+        ExecutionStatus::Err(e) => panic!("withdraw failed: {e}"),
+    }
+}
+```
+
+## Running Tests
+
+```bash
+quasar test
+```
+
+This builds the program, generates the client, and runs `cargo test`. You can also filter by test name:
+
+```bash
+quasar test --filter deposit
+```
+
+Or run tests directly with cargo:
+
+```bash
+cargo test -- --nocapture
+```
+
+The `--nocapture` flag is useful when you want to see `println!` output, such as CU consumption numbers.
