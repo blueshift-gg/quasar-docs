@@ -1,6 +1,217 @@
 ---
 title: Program Structure
-description: How a Quasar program is organized and the role of each macro.
+description: How a Quasar program is organized — the #[program] macro, module layout conventions, allocator configuration, and debug mode.
 ---
 
-Content coming soon.
+Every Quasar program follows a consistent module layout. The `#[program]` macro ties it all together by generating the on-chain entrypoint, instruction dispatch table, event authority PDA, panic handler, and allocator configuration. This page covers each piece and how they interact.
+
+## Module Layout
+
+A typical Quasar program has this directory structure:
+
+```
+my-program/
+  Cargo.toml
+  src/
+    lib.rs              # Program entry, declare_id!, #[program] module
+    instructions/       # One file per instruction handler
+      mod.rs
+      deposit.rs
+      withdraw.rs
+    state.rs            # #[account] definitions
+    errors.rs           # #[error_code] enum
+    events.rs           # #[event] definitions
+```
+
+The `lib.rs` file is the central hub. It declares the program ID, imports the instruction handlers, and wraps them in the `#[program]` module. Here is the escrow example's `lib.rs`:
+
+```rust
+#![no_std]
+
+use quasar_lang::prelude::*;
+
+mod instructions;
+use instructions::*;
+mod events;
+mod state;
+
+declare_id!("22222222222222222222222222222222222222222222");
+
+#[program]
+mod quasar_escrow {
+    use super::*;
+
+    #[instruction(discriminator = 0)]
+    pub fn make(ctx: Ctx<Make>, deposit: u64, receive: u64) -> Result<(), ProgramError> {
+        ctx.accounts.make_escrow(receive, &ctx.bumps)?;
+        ctx.accounts.emit_event(deposit, receive)?;
+        ctx.accounts.deposit_tokens(deposit)
+    }
+
+    #[instruction(discriminator = 1)]
+    pub fn take(ctx: Ctx<Take>) -> Result<(), ProgramError> {
+        ctx.accounts.transfer_tokens()?;
+        ctx.accounts.withdraw_tokens_and_close(&ctx.bumps)?;
+        ctx.accounts.emit_event()
+    }
+
+    #[instruction(discriminator = 2)]
+    pub fn refund(ctx: Ctx<Refund>) -> Result<(), ProgramError> {
+        ctx.accounts.withdraw_tokens_and_close(&ctx.bumps)?;
+        ctx.accounts.emit_event()
+    }
+}
+```
+
+Key observations:
+
+- **`#![no_std]`** is required. Quasar programs target the SVM runtime and do not link `std`.
+- **`declare_id!`** sets the `crate::ID` constant used for owner checks and PDA derivation.
+- **`#[program]`** annotates a module containing `#[instruction]` functions. The module name (`quasar_escrow`) determines the generated program type name (`QuasarEscrow`).
+
+## What `#[program]` Generates
+
+The `#[program]` macro performs substantial code generation. Understanding what it produces helps you debug and reason about your program's behavior.
+
+### 1. Entrypoint
+
+The macro generates an `entrypoint` function with the `#[unsafe(no_mangle)]` attribute, which the Solana runtime calls when your program is invoked:
+
+```rust
+#[unsafe(no_mangle)]
+#[cfg(target_os = "solana")]
+pub unsafe extern "C" fn entrypoint(ptr: *mut u8, instruction_data: *const u8) -> u64 {
+    // Initialize bump allocator (if alloc feature is enabled)
+    // Reconstruct instruction_data slice from SVM buffer layout
+    // Dispatch to __dispatch
+}
+```
+
+This function handles the raw SVM calling convention and forwards to the dispatch table.
+
+### 2. Dispatch Table
+
+A `__dispatch` function routes instructions by matching on the discriminator prefix of the instruction data:
+
+```rust
+fn __dispatch(ptr: *mut u8, instruction_data: &[u8]) -> Result<(), ProgramError> {
+    // Check for 0xFF prefix (reserved for events)
+    // Match discriminator bytes against instruction handlers
+}
+```
+
+The discriminator byte `0xFF` is reserved for the event self-CPI protocol. If instruction data starts with `0xFF`, it is routed to the event handler instead of the instruction dispatch table. This means your instruction discriminators must never start with `0xFF` -- the macro enforces this at compile time.
+
+All instruction discriminators within a program must have the same byte length. Duplicate discriminators are also caught at compile time.
+
+### 3. Program Type and Event Authority
+
+Outside the module, the macro generates a named program type derived from the module name (e.g., `quasar_escrow` becomes `QuasarEscrow`):
+
+```rust
+// Generated program type with Executable + Address checks
+pub struct QuasarEscrow { /* ... */ }
+
+// Event authority PDA, derived at compile time
+pub struct EventAuthority { /* ... */ }
+
+impl EventAuthority {
+    pub const ADDRESS: Address = /* PDA from seeds ["__event_authority"] */;
+    pub const BUMP: u8 = /* bump */;
+}
+```
+
+The `EventAuthority` PDA is computed at compile time using `find_program_address_const`. It is used for self-CPI event emission (see [CPI](./cpi) for details). The program type also gets an `emit_event` method for emitting events through CPI.
+
+### 4. Client Module
+
+A `client` module is generated inside the program module, compiled only for non-SVM targets (`#[cfg(not(target_os = "solana"))]`). It provides typed instruction builders for each instruction, which are used in tests and off-chain clients.
+
+### 5. Panic Handler
+
+The macro generates a minimal panic handler that logs `"PANIC"` and enters an infinite loop. This is the standard pattern for `no_std` SVM programs.
+
+## Allocator Configuration
+
+Quasar programs default to **no allocator**. The `no_alloc!()` macro installs a global allocator that panics on any allocation attempt. This is intentional: Quasar's zero-copy design means most programs never need heap allocation.
+
+If your program requires heap allocation (e.g., for `alloc::vec::Vec` or `alloc::string::String`), enable the `alloc` feature flag in your `Cargo.toml`:
+
+```toml
+[dependencies]
+quasar-lang = { version = "...", features = ["alloc"] }
+```
+
+When `alloc` is enabled, the `#[program]` macro uses `heap_alloc!()` instead, which installs a bump allocator with a 256 KiB heap region. The bump allocator is extremely fast (no free-list overhead), but memory is never reclaimed within a single instruction execution.
+
+The entrypoint initializes the heap cursor before any allocation can occur:
+
+```rust
+#[cfg(feature = "alloc")]
+{
+    let heap_start = allocator::HEAP_START_ADDRESS as usize;
+    *(heap_start as *mut usize) = heap_start + core::mem::size_of::<usize>();
+}
+```
+
+## Debug Mode
+
+Quasar programs can be built with the `debug` feature flag to enable detailed error logging:
+
+```bash
+quasar build --debug
+```
+
+In debug mode, account validation failures produce descriptive log messages like:
+
+```
+Account 'escrow' (index 1): must be writable, no duplicates
+```
+
+Without debug mode, these log statements are compiled out entirely, saving compute units and binary size. Always build without `--debug` for production deployments.
+
+## The `#![no_std]` Requirement
+
+Quasar programs are `#![no_std]` by design. The `prelude::*` import provides everything you need:
+
+- `ProgramError`, `Address`, `AccountView` -- core Solana types
+- `Ctx`, `CtxWithRemaining`, `Context` -- instruction context types
+- `Account`, `Signer`, `UncheckedAccount`, `SystemAccount`, `Program`, `Interface`, `Sysvar` -- account wrappers
+- `System` -- system program marker type
+- `Rent` -- sysvar access
+- `ParseAccounts`, `AccountCount`, `AsAccountView` -- framework traits
+- `emit!`, `require!`, `require_eq!` -- utility macros
+- `log` -- logging function
+- `set_lamports` -- direct lamport mutation
+
+## Instruction Handler Pattern
+
+Each instruction handler follows a consistent pattern:
+
+1. Accept `ctx: Ctx<AccountsStruct>` as the first parameter, plus any additional typed arguments
+2. Delegate business logic to methods on the accounts struct
+3. Return `Result<(), ProgramError>`
+
+```rust
+#[instruction(discriminator = 0)]
+pub fn deposit(ctx: Ctx<Deposit>, amount: u64) -> Result<(), ProgramError> {
+    ctx.accounts.deposit(amount)
+}
+```
+
+This pattern keeps the `#[program]` module slim and pushes logic into the `impl` blocks of each accounts struct, which live in the `instructions/` directory.
+
+For instructions that need access to remaining accounts (e.g., for forwarding to CPIs with a variable number of signers), use `CtxWithRemaining` instead:
+
+```rust
+#[instruction(discriminator = 0)]
+pub fn create(ctx: CtxWithRemaining<Create>, threshold: u8) -> Result<(), ProgramError> {
+    ctx.accounts.create_multisig(threshold, &ctx.bumps, ctx.remaining_accounts())
+}
+```
+
+## Next Steps
+
+- [Accounts and Validation](./accounts-and-validation) -- how account types and `#[derive(Accounts)]` work
+- [Instructions](./instructions) -- the `#[instruction]` macro and argument handling
+- [IDL](./idl) -- generating the program interface description
