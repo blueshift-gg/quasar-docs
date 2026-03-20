@@ -1,9 +1,9 @@
 ---
 title: Quasar
-description: Zero-copy, zero-allocation Solana program framework.
+description: Quasar is a Solana program development framework for writing blazing fast SVM programs.
 ---
 
-Quasar is a Solana program development framework for writing blazing fast SVM programs.
+Quasar is a Solana program framework. Programs are `#![no_std]` by default -- accounts are pointer-cast directly from the SVM input buffer with no deserialization, no heap allocation, and no copies. You write `#[program]`, `#[account]`, and `#[derive(Accounts)]` like Anchor, but the generated code compiles down to near-hand-written CU efficiency.
 
 | Vault benchmark | **Quasar** | **Pinocchio** | **Anchor 0.32** |
 | --- | --- | --- | --- |
