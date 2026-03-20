@@ -1,4 +1,5 @@
 {
   "title": "Zero-Copy Deep Dive",
+  "icon": "Layers2",
   "pages": ["pod-types", "account-layout", "dynamic-fields"]
 }

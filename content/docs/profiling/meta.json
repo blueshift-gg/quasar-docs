@@ -1,4 +1,5 @@
 {
   "title": "Profiling & Performance",
+  "icon": "Gauge",
   "pages": ["cu-profiler", "flamegraphs", "benchmarks"]
 }

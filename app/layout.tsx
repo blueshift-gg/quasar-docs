@@ -31,6 +31,15 @@ export const metadata: Metadata = {
     default: 'Quasar — Zero-Copy Solana Framework',
   },
   description: 'Zero-copy, zero-allocation Solana programs with Anchor-level developer experience.',
+  openGraph: {
+    type: 'website',
+    url: 'https://quasar-lang.com',
+    title: 'Quasar — Zero-Copy Solana Framework',
+    description: 'Zero-copy, zero-allocation Solana programs with Anchor-level developer experience.',
+    images: [
+      { url: 'https://quasar-lang.com/meta-image.png' },
+    ],
+  },
 };
 
 export default function Layout({ children }: { children: ReactNode }) {

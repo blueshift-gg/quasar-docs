@@ -1,4 +1,5 @@
 {
   "title": "References",
+  "icon": "ListOrdered",
   "pages": ["account-types", "account-constraints", "cli", "type-mapping", "configuration"]
 }
