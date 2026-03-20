@@ -77,7 +77,7 @@ The CLI generates a program keypair at `target/deploy/my-program-keypair.json` a
 ## Add a new instruction
 
 ```bash
-quasar template add-instruction transfer
+quasar add -i transfer
 ```
 
 This creates `src/instructions/transfer.rs`, updates `src/instructions/mod.rs`, and adds the instruction to the `#[program]` block in `src/lib.rs` with the next available discriminator.
