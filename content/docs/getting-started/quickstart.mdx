@@ -15,7 +15,7 @@ The CLI prompts for three choices:
 
 1. **Toolchain** -- `solana` (default) or `upstream`. See [Installation](./installation) for details.
 2. **Testing framework** -- `Rust` (default), `TypeScript`, `Kit`, `Rust (Mollusk)`, or `None`.
-3. **Template** -- `Minimal` (instruction file only) or `Full` (adds state and events modules).
+3. **Template** -- `Minimal` (single-file program) or `Full` (separate modules for state, errors, and instructions).
 
 Skip all prompts:
 
@@ -25,64 +25,29 @@ quasar init my-program --toolchain solana --framework quasarsvm-rust --template 
 
 ## Project structure
 
-### Quasar.toml
-
-Project manifest recording name, toolchain, and testing framework:
-
-```toml
-[project]
-name = "my-program"
-
-[toolchain]
-type = "solana"
-
-[testing]
-framework = "quasarsvm-rust"
-```
-
-### Cargo.toml
-
-`crate-type = ["cdylib"]` compiles the program to a shared object the Solana runtime can load:
-
-```toml
-[package]
-name = "my-program"
-version = "0.1.0"
-edition = "2021"
-
-[lints.rust.unexpected_cfgs]
-level = "warn"
-check-cfg = [
-    'cfg(target_os, values("solana"))',
-]
-
-[lib]
-crate-type = ["cdylib"]
-
-[features]
-alloc = []
-client = []
-debug = []
-
-[dependencies]
-quasar-lang = { git = "https://github.com/blueshift-gg/quasar" }
-```
-
-Feature flags: `debug` enables verbose constraint failure messages on-chain, `client` enables the off-chain instruction builder module, `alloc` enables heap allocation.
-
 ### src/lib.rs
 
-The program entrypoint:
+The minimal template puts everything in a single file:
 
 ```rust
 #![cfg_attr(not(test), no_std)]
 
 use quasar_lang::prelude::*;
 
-mod instructions;
-use instructions::*;
-
 declare_id!("<YOUR_PROGRAM_ID>");
+
+#[derive(Accounts)]
+pub struct Initialize<'info> {
+    pub payer: &'info mut Signer,
+    pub system_program: &'info Program<System>,
+}
+
+impl<'info> Initialize<'info> {
+    #[inline(always)]
+    pub fn initialize(&self) -> Result<(), ProgramError> {
+        Ok(())
+    }
+}
 
 #[program]
 mod my_program {
@@ -100,26 +65,6 @@ mod my_program {
 - **`#[program]`** -- Generates the dispatch table, entrypoint, and (off-chain) a client module.
 - **`#[instruction(discriminator = 0)]`** -- Each instruction gets an explicit discriminator. Accepts a single integer (`discriminator = 0`) or a byte array (`discriminator = [1, 0, 0, 0]`). Must be unique within a program.
 - **`Ctx<Initialize>`** -- Typed context containing the validated `Initialize` accounts struct and PDA bumps.
-
-### src/instructions/initialize.rs
-
-```rust
-use quasar_lang::prelude::*;
-
-#[derive(Accounts)]
-pub struct Initialize<'info> {
-    pub payer: &'info mut Signer,
-    pub system_program: &'info Program<System>,
-}
-
-impl<'info> Initialize<'info> {
-    #[inline(always)]
-    pub fn initialize(&self) -> Result<(), ProgramError> {
-        Ok(())
-    }
-}
-```
-
 - **`#[derive(Accounts)]`** -- Generates parsing and validation. Each field is a typed account reference with automatic signer, ownership, and mutability checks.
 - **`&'info mut Signer`** -- Mutable reference to a signer. `mut` means writable; `Signer` requires a signature.
 - **`&'info Program<System>`** -- Reference to the System program, validated by address.
@@ -132,7 +77,7 @@ The CLI generates a program keypair at `target/deploy/my-program-keypair.json` a
 ## Add a new instruction
 
 ```bash
-quasar new instruction transfer
+quasar template add-instruction transfer
 ```
 
 This creates `src/instructions/transfer.rs`, updates `src/instructions/mod.rs`, and adds the instruction to the `#[program]` block in `src/lib.rs` with the next available discriminator.
@@ -218,7 +163,7 @@ Reads the keypair from `target/deploy/` and deploys the compiled `.so` file. Spe
 
 ## The full template
 
-The `Full` template adds `src/state.rs` and `src/events.rs`:
+The `Full` template adds `src/state.rs` and `src/errors.rs`:
 
 **src/state.rs** -- On-chain account types:
 
@@ -232,18 +177,21 @@ pub struct MyAccount {
 }
 ```
 
-**src/events.rs** -- Events emitted during execution:
+**src/errors.rs** -- Custom program errors:
 
 ```rust
 use quasar_lang::prelude::*;
 
-#[event(discriminator = 0)]
-pub struct InitializeEvent {
-    pub authority: Address,
+#[error_code]
+pub enum MyProgramError {
+    #[error("Unauthorized access")]
+    Unauthorized,
+    #[error("Invalid amount")]
+    InvalidAmount,
 }
 ```
 
-For a full program with state, events, and multiple instructions, see [Build a Vault](/docs/guides/build-a-vault).
+For a full program with state, errors, and multiple instructions, see [Build a Vault](/docs/guides/build-a-vault).
 
 ## Next steps
 
