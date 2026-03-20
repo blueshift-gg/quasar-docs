@@ -27,15 +27,15 @@ const aspekta = localFont({
 
 export const metadata: Metadata = {
   title: {
-    template: '%s | Quasar',
-    default: 'Quasar — Zero-Copy Solana Framework',
+    template: '%s | quasar',
+    default: 'quasar 💫 — Build blazing fast Solana programs.',
   },
-  description: 'Zero-copy, zero-allocation Solana programs with Anchor-level developer experience.',
+  description: 'A high-performance framework for building, testing and optimizing Solana programs.',
   openGraph: {
     type: 'website',
     url: 'https://quasar-lang.com',
-    title: 'Quasar — Zero-Copy Solana Framework',
-    description: 'Zero-copy, zero-allocation Solana programs with Anchor-level developer experience.',
+    title: 'quasar 💫 — Build blazing fast Solana programs',
+    description: 'A high-performance framework for building, testing and optimizing Solana programs.',
     images: [
       { url: 'https://quasar-lang.com/meta-image.png' },
     ],
