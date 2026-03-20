@@ -3,10 +3,6 @@ title: Installation
 description: Install Quasar and set up your development environment.
 ---
 
-**Quasar is in beta.** There are no published crate releases yet. Install from source by cloning the repository.
-
----
-
 ## Prerequisites
 
 Install [Rust](https://rustup.rs/) and the [Solana CLI](https://docs.anza.xyz/cli/install):
@@ -21,12 +17,8 @@ sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
 
 ## Install the Quasar CLI
 
-Clone the repository and install from source:
-
 ```bash
-git clone https://github.com/blueshift-gg/quasar.git
-cd quasar
-cargo install --path cli
+cargo install quasar-cli
 ```
 
 Verify with `quasar --version`.
