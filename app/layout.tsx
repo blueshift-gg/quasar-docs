@@ -26,6 +26,7 @@ const aspekta = localFont({
 
 
 export const metadata: Metadata = {
+  metadataBase: new URL('https://quasar-lang.com'),
   title: {
     template: '%s | quasar',
     default: 'quasar 💫 — Build blazing fast Solana programs.',
