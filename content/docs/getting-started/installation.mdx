@@ -3,112 +3,63 @@ title: Installation
 description: Install Quasar and set up your development environment.
 ---
 
+**Quasar is in beta.** There are no published crate releases yet. Install from source by cloning the repository.
+
+---
+
 ## Prerequisites
 
-### Rust
-
-Install Rust via [rustup](https://rustup.rs/):
+Install [Rust](https://rustup.rs/) and the [Solana CLI](https://docs.anza.xyz/cli/install):
 
 ```bash
+# Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
 
-Quasar requires the 2021 edition. Any recent stable Rust release works.
-
-### Solana CLI
-
-Install the Solana CLI tools:
-
-```bash
+# Solana CLI
 sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
 ```
 
-Verify with `solana --version`.
-
 ## Install the Quasar CLI
 
-Install the Quasar CLI with Cargo:
+Clone the repository and install from source:
 
 ```bash
-cargo install quasar-cli
+git clone https://github.com/blueshift-gg/quasar.git
+cd quasar
+cargo install --path cli
 ```
 
 Verify with `quasar --version`.
 
-## Toolchain selection
+## Toolchain
 
-Quasar supports two toolchains for compiling to SBF (Solana Bytecode Format). Choose during `quasar init`; the choice is saved in `Quasar.toml`.
+Quasar compiles programs to SBF (Solana Bytecode Format). Two toolchains are available:
 
-### Solana toolchain (default)
+| Toolchain | Build command | Notes |
+|-----------|---------------|-------|
+| **Solana** (default) | `cargo build-sbf` | Uses the Solana CLI. No extra setup. |
+| **Upstream** | `cargo +nightly build` | Targets `bpfel-unknown-none` with [`sbpf-linker`](https://github.com/blueshift-gg/sbpf-linker). Smaller binaries, nightly features. |
 
-Uses `cargo build-sbf` from the Solana CLI.
-
-- **Prerequisite:** Solana CLI (covered above).
-- **Build command:** `cargo build-sbf` (invoked by `quasar build`).
-
-### Upstream toolchain
-
-Uses `cargo +nightly build` targeting `bpfel-unknown-none` with the `sbpf-linker`. Produces smaller binaries and gives access to nightly Rust features.
-
-- **Prerequisites:**
-  - Rust nightly: `rustup toolchain install nightly`
-  - The `bpfel-unknown-none` target: `rustup target add bpfel-unknown-none --toolchain nightly`
-  - The `sbpf-linker` from [blueshift-gg/sbpf-linker](https://github.com/blueshift-gg/sbpf-linker):
-    ```bash
-    git clone https://github.com/blueshift-gg/sbpf-linker
-    cd sbpf-linker
-    cargo install-with-gallery
-    ```
-- **Build command:** `cargo +nightly build-bpf` (invoked by `quasar build` when the upstream toolchain is configured).
-
-During `quasar init`, selecting upstream generates a `.cargo/config.toml` with the build target, linker flags (`-C linker=sbpf-linker`), and feature flags. If `sbpf-linker` is not on your PATH, the CLI exits with installation instructions.
-
-### Changing your toolchain later
-
-The toolchain is stored in `Quasar.toml` under `[toolchain]`:
+Choose during `quasar init` or set in `Quasar.toml`:
 
 ```toml
 [toolchain]
 type = "solana"
 ```
 
-Edit this file directly, or run `quasar config set defaults.toolchain upstream` to change the default for future projects.
+### Upstream setup
+
+The upstream toolchain requires nightly Rust, the SBF target, and the linker:
+
+```bash
+rustup toolchain install nightly
+rustup target add bpfel-unknown-none --toolchain nightly
+cargo install sbpf-linker
+```
 
 ## Editor setup
 
-Install [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer) for your editor.
-
-- **`check-cfg`:** Quasar uses `cfg(target_os = "solana")`. The generated `Cargo.toml` includes a `[lints.rust.unexpected_cfgs]` entry so rust-analyzer won't warn about it.
-- **`no_std`:** Quasar programs compile as `#![no_std]` on-chain. If rust-analyzer reports missing `std` items, use types from `quasar_lang::prelude` instead.
-- **`client` feature:** Enable `client` in your editor settings for autocompletion on the generated client module (gated behind `#[cfg(not(target_os = "solana"))]`).
-
-## Global configuration
-
-The CLI saves preferences to `~/.quasar/config.toml` after the first `quasar init`, skipping prompts on subsequent projects. View and modify with `quasar config`:
-
-```bash
-# List all settings
-quasar config list
-
-# Set a default
-quasar config set defaults.toolchain solana
-quasar config set defaults.framework quasarsvm-rust
-quasar config set defaults.template minimal
-
-# Interactive menu
-quasar config
-```
-
-Available settings:
-
-| Key | Values | Description |
-|---|---|---|
-| `defaults.toolchain` | `solana`, `upstream` | Default toolchain for new projects |
-| `defaults.framework` | `none`, `mollusk`, `quasarsvm-rust`, `quasarsvm-web3js`, `quasarsvm-kit` | Default testing framework |
-| `defaults.template` | `minimal`, `full` | Default project template |
-| `ui.animation` | `true`, `false` | Show the animated banner during init |
-| `ui.color` | `true`, `false` | Enable colored terminal output |
-| `ui.timing` | `true`, `false` | Show build timing information |
+Install [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer). Quasar programs use `#![no_std]` and `cfg(target_os = "solana")` -- the generated `Cargo.toml` configures `check-cfg` so rust-analyzer won't warn about either.
 
 ## Next steps
 
