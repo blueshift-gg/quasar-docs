@@ -1,131 +1,37 @@
 ---
 title: Migrating from Anchor
-description: Step-by-step guide to migrate an existing Anchor program to Quasar.
+description: What changes when you port an Anchor program to Quasar.
 ---
 
-Quasar shares Anchor's mental model -- derive macros for accounts, typed contexts for instructions, constraint-based validation. The key runtime difference: Quasar is zero-copy and `no_std`, so there is no deserialization and no heap allocation.
+Quasar is designed to feel like Anchor. `#[derive(Accounts)]`, `#[program]`, `seeds`, `bump`, `has_one`, `constraint`, `init`, `close`, `require!` -- all work the same way. The runtime difference: Quasar is zero-copy and `no_std`, so there is no deserialization and no heap allocation.
 
-## What stays the same
+## Imports
 
-- **`#[derive(Accounts)]`** works the same way. Struct with typed account fields and attribute constraints.
-- **Account constraints** -- `seeds`, `bump`, `has_one`, `constraint`, `init`, `init_if_needed`, `payer`, `close`, and `address` all exist with the same syntax.
-- **Error codes** use `#[error_code]` with `#[msg("...")]` annotations. Variants auto-increment from 0 by default; set `= 6000` on the first variant for Anchor-compatible numbering.
-- **`require!`, `require_eq!`, `require_keys_eq!`** macros work identically.
-- **PDA derivation** uses the same `seeds` and `bump` system. Bumps are accessible via a generated `Bumps` companion struct.
-- **Project layout** follows the same convention: `lib.rs` as entrypoint, `instructions/` directory, `state.rs` for accounts, `events.rs` for events.
-
-## Program declaration
-
-**Anchor:**
 ```rust
-use anchor_lang::prelude::*;
-
-declare_id!("11111111111111111111111111111111");
-
-#[program]
-mod my_program {
-    use super::*;
-
-    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
-        // ...
-        Ok(())
-    }
-}
-```
-
-**Quasar:**
-```rust
+// anchor_lang::prelude::*;
 use quasar_lang::prelude::*;
+```
 
-declare_id!("11111111111111111111111111111111");
+## Instructions
 
-#[program]
-mod my_program {
-    use super::*;
-
-    #[instruction(discriminator = 0)]
-    pub fn initialize(ctx: Ctx<Initialize>) -> Result<(), ProgramError> {
-        ctx.accounts.initialize()
-    }
+```rust
+#[instruction(discriminator = 0)]
+pub fn make(ctx: Ctx<Make>, deposit: u64, receive: u64) -> Result<(), ProgramError> {
+    ctx.accounts.make_escrow(receive, &ctx.bumps)?;
+    ctx.accounts.deposit_tokens(deposit)
 }
 ```
 
-Three differences:
+| Anchor | Quasar |
+|--------|--------|
+| `Context<T>` | `Ctx<T>` |
+| `Result<()>` | `Result<(), ProgramError>` |
+| Discriminator optional (defaults to SHA-256 hash) | Discriminator **required** -- no implicit hashing |
 
-1. **Explicit discriminators.** Every instruction has `#[instruction(discriminator = N)]` with a developer-specified value (single integer or byte array like `[1, 0, 0, 0]`). Anchor uses SHA-256 hashes; Quasar uses explicit bytes. Discriminators must be unique within a program. Instruction discriminators may be zero; account discriminators may not (all-zero is rejected at compile time to prevent uninitialized data from passing validation).
+Logic lives in `impl` methods on the accounts struct. The `#[program]` block is just dispatch.
 
-2. **`Ctx<T>` instead of `Context<T>`.** Holds your parsed accounts, bumps, and program ID. `CtxWithRemaining<T>` provides access to [remaining accounts](/docs/features/remaining-accounts).
+## Accounts struct
 
-3. **`Result<(), ProgramError>` instead of `Result<()>`.** Quasar returns Solana's native `ProgramError` directly, no wrapper type.
-
-## Account types
-
-**Anchor:**
-```rust
-#[account]
-pub struct Escrow {
-    pub maker: Pubkey,
-    pub mint_a: Pubkey,
-    pub mint_b: Pubkey,
-    pub receive: u64,
-    pub bump: u8,
-}
-```
-
-**Quasar:**
-```rust
-#[account(discriminator = 1)]
-pub struct Escrow {
-    pub maker: Address,
-    pub mint_a: Address,
-    pub mint_b: Address,
-    pub receive: u64,
-    pub bump: u8,
-}
-```
-
-Differences:
-
-- **Explicit discriminator.** Account types require `discriminator = N` where at least one byte is non-zero. All-zero discriminators are rejected at compile time.
-- **`Address` instead of `Pubkey`.** `Address` is alignment-1 (`[u8; 32]`), which is required for zero-copy access on unaligned account data.
-- **Zero-copy companion struct.** `#[account]` generates a `#[repr(C)]` companion type (prefixed `Zc`) with Pod fields. `Account<Escrow>` reads data directly from account memory via pointer casts -- no deserialization.
-- **`set_inner()` instead of field assignment.** Writes all fields at once via the zero-copy companion:
-
-```rust
-self.escrow.set_inner(
-    *self.maker.address(),
-    *self.mint_a.address(),
-    *self.mint_b.address(),
-    *self.maker_ta_b.address(),
-    receive,
-    bumps.escrow,
-);
-```
-
-## Accounts struct and constraints
-
-**Anchor:**
-```rust
-#[derive(Accounts)]
-pub struct Take<'info> {
-    #[account(mut)]
-    pub taker: Signer<'info>,
-    #[account(
-        mut,
-        has_one = maker,
-        constraint = escrow.receive > 0,
-        close = taker,
-        seeds = [b"escrow", maker.key().as_ref()],
-        bump = escrow.bump
-    )]
-    pub escrow: Account<'info, Escrow>,
-    #[account(mut)]
-    pub maker: UncheckedAccount<'info>,
-    pub system_program: Program<'info, System>,
-}
-```
-
-**Quasar:**
 ```rust
 #[derive(Accounts)]
 pub struct Take<'info> {
@@ -139,111 +45,65 @@ pub struct Take<'info> {
     )]
     pub escrow: &'info mut Account<Escrow>,
     pub maker: &'info mut UncheckedAccount,
+    pub token_program: &'info Program<Token>,
     pub system_program: &'info Program<System>,
 }
 ```
 
-Structural differences:
+| Anchor | Quasar |
+|--------|--------|
+| `Signer<'info>` | `&'info Signer` or `&'info mut Signer` |
+| `Account<'info, T>` | `&'info Account<T>` or `&'info mut Account<T>` |
+| `#[account(mut)]` attribute | `&'info mut` in the type |
+| `seeds = [b"escrow", maker.key().as_ref()]` | `seeds = [b"escrow", maker]` -- field name directly |
 
-| Anchor | Quasar | Why |
-|---|---|---|
-| `Signer<'info>` | `&'info Signer` or `&'info mut Signer` | References, not owned values. Mutability is expressed in the reference type. |
-| `Account<'info, T>` | `&'info Account<T>` or `&'info mut Account<T>` | Same pattern -- references instead of owned wrappers. |
-| `#[account(mut)]` attribute | `&'info mut` in the type | Mutability is part of the Rust type, not a separate attribute. The derive macro reads the reference mutability directly. |
-| `seeds = [b"escrow", maker.key().as_ref()]` | `seeds = [b"escrow", maker]` | In Quasar, you pass the account field name directly. The macro extracts the address automatically. |
-
-### Business logic placement
-
-In Anchor, instruction logic lives in the `#[program]` function body. In Quasar, implement methods on the accounts struct:
+## Account types
 
 ```rust
-impl<'info> Take<'info> {
-    #[inline(always)]
-    pub fn transfer_tokens(&mut self) -> Result<(), ProgramError> {
-        self.token_program
-            .transfer(self.taker_ta_b, self.maker_ta_b, self.taker, self.escrow.receive)
-            .invoke()
-    }
+#[account(discriminator = 1)]
+pub struct Escrow {
+    pub maker: Address,
+    pub mint_a: Address,
+    pub receive: u64,
+    pub bump: u8,
 }
 ```
 
-The `#[program]` block becomes a thin dispatch layer:
+| Anchor | Quasar |
+|--------|--------|
+| `#[account]` | `#[account(discriminator = N)]` -- explicit, must be non-zero |
+| Borsh deserialization | Zero-copy -- fields read directly from account memory |
+
+`Address` replaces `Pubkey` and `.address()` replaces `.key()` -- this is a Solana SDK change, not Quasar-specific.
+
+## CPI
+
+Method-style calls instead of `CpiContext`:
 
 ```rust
-#[instruction(discriminator = 1)]
-pub fn take(ctx: Ctx<Take>) -> Result<(), ProgramError> {
-    ctx.accounts.transfer_tokens()?;
-    ctx.accounts.withdraw_tokens_and_close(&ctx.bumps)
-}
-```
-
-## CPI: Cross-program invocation
-
-**Anchor:**
-```rust
-let cpi_ctx = CpiContext::new(
-    ctx.accounts.token_program.to_account_info(),
-    Transfer {
-        from: ctx.accounts.vault.to_account_info(),
-        to: ctx.accounts.user_token.to_account_info(),
-        authority: ctx.accounts.escrow.to_account_info(),
-    },
-);
-token::transfer(cpi_ctx, amount)?;
-```
-
-**Quasar:**
-```rust
+// Transfer tokens (no PDA signer)
 self.token_program
-    .transfer(self.vault_ta_a, self.taker_ta_a, self.escrow, amount)
-    .invoke_signed(&seeds)?;
-```
-
-Quasar's CPI uses method-style calls that return a `CpiCall` -- account count and data size are const generics, so everything stays on the stack.
-
-System program CPIs follow the same pattern:
-
-```rust
-self.system_program
-    .transfer(self.user, self.vault, amount)
+    .transfer(self.maker_ta_a, self.vault_ta_a, self.maker, amount)
     .invoke()
 ```
 
-Signed invocation (PDA seeds) uses `.invoke_signed(&seeds)` instead of wrapping in `CpiContext::new_with_signer`.
-
-### PDA seeds for CPI
-
-`#[derive(Accounts)]` generates a `Bumps` struct with a `*_seeds()` helper for each PDA:
-
 ```rust
-pub fn withdraw(&mut self, bumps: &TakeBumps) -> Result<(), ProgramError> {
-    let seeds = bumps.escrow_seeds();
-    self.token_program
-        .transfer(self.vault, self.taker_ta, self.escrow, amount)
-        .invoke_signed(&seeds)
-}
+// PDA-signed transfer + close
+let seeds = bumps.escrow_seeds();
+
+self.token_program
+    .transfer(self.vault_ta_a, self.taker_ta_a, self.escrow, amount)
+    .invoke_signed(&seeds)?;
+
+self.vault_ta_a
+    .close(self.token_program, self.taker, self.escrow)
+    .invoke_signed(&seeds)
 ```
+
+`#[derive(Accounts)]` generates seed helpers on the bumps struct -- `bumps.escrow_seeds()` returns the full seeds array ready for `invoke_signed`. No manual seed construction needed.
 
 ## Events
 
-**Anchor:**
-```rust
-#[event]
-pub struct MakeEvent {
-    pub escrow: Pubkey,
-    pub maker: Pubkey,
-    pub deposit: u64,
-}
-
-// In instruction handler:
-emit!(MakeEvent {
-    escrow: ctx.accounts.escrow.key(),
-    maker: ctx.accounts.maker.key(),
-    deposit: amount,
-});
-```
-
-**Quasar:**
 ```rust
 #[event(discriminator = 0)]
 pub struct MakeEvent {
@@ -252,7 +112,7 @@ pub struct MakeEvent {
     pub deposit: u64,
 }
 
-// In instruction handler:
+// Emit via sol_log_data (~100 CU)
 emit!(MakeEvent {
     escrow: *self.escrow.address(),
     maker: *self.maker.address(),
@@ -260,114 +120,53 @@ emit!(MakeEvent {
 });
 ```
 
-Events require an explicit discriminator. `emit!()` emits via `sol_log_data` (~100 CU). `emit_cpi!()` emits via self-CPI to an `__event_authority` PDA (~1,000 CU), proving the event was emitted by your program. Supported field types: `Address`, `u8`--`u128`, `i8`--`i128`, `bool`.
+Same as Anchor but with an explicit discriminator. Supported field types: `Address`, `u8`--`u128`, `i8`--`i128`, `bool`.
 
 ## Error codes
 
-**Anchor:**
 ```rust
 #[error_code]
 pub enum MyError {
-    #[msg("Insufficient funds")]
+    Unauthorized,
     InsufficientFunds,
 }
 
-// Usage:
 require!(amount > 0, MyError::InsufficientFunds);
 ```
 
-**Quasar:**
-```rust
-#[error_code]
-pub enum MyError {
-    #[msg("Insufficient funds")]
-    InsufficientFunds,
-}
+`require!`, `require_eq!`, and `require_keys_eq!` work the same. Variants map to `ProgramError::Custom(N)` with an offset of 6000.
 
-// Usage:
-require!(amount > 0, MyError::InsufficientFunds);
-```
+## `no_std`
 
-Syntax is identical. Quasar's `#[error_code]` starts variant numbering at 0 by default, not 6000. To match Anchor's convention, set `= 6000` on the first variant:
+Quasar programs are `#![no_std]` on-chain (`std` is available during tests via `cfg_attr`).
+
+No `std::string::String`, `std::vec::Vec`, or heap allocation. Quasar provides its own zero-copy replacements for use in account structs:
 
 ```rust
-#[error_code]
-pub enum MyError {
-    #[msg("Insufficient funds")]
-    InsufficientFunds = 6000,  // explicit start
-    #[msg("Invalid state")]
-    InvalidState,              // = 6001
+#[account(discriminator = 1)]
+pub struct MultisigConfig<'a> {
+    pub creator: Address,
+    pub threshold: u8,
+    pub label: String<'a, 32>,         // max 32 bytes, accessed as &str
+    pub signers: Vec<'a, Address, 10>, // max 10 elements, accessed as &[Address]
 }
 ```
 
-Any variant can reset the counter with an explicit discriminant:
+`String<'a, MAX>` and `Vec<'a, T, MAX>` are stored inline in the account data with a length prefix. They are read as `&str` and `&[T]` slices -- zero-copy, zero allocation. The `MAX` parameter sets the upper bound enforced at write time.
 
-```rust
-#[error_code]
-pub enum MyError {
-    Hello = 0,
-    World,           // = 1
-    ExplicitNum = 100,
-    AfterExplicit,   // = 101
-}
-```
+Use `log()` instead of `println!()` for on-chain logging.
 
-Framework-level validation errors (`AccountNotInitialized`, `InvalidPda`, `ConstraintViolation`, `HasOneMismatch`, `InvalidDiscriminator`, `AddressMismatch`, etc.) live in `QuasarError`, starting at 3000.
-
-## `Pubkey` vs `Address`
-
-The most pervasive change. Anchor uses `Pubkey` (alignment 4). Quasar uses `Address` (alignment 1, `[u8; 32]`), which is required for zero-copy access on unaligned account data.
+## Quick reference
 
 | Anchor | Quasar |
-|---|---|
-| `account.key()` | `*account.address()` |
-| `Pubkey::new_unique()` | `Address::new_unique()` (tests only) |
-| `system_program::ID` | `SYSTEM_PROGRAM_ID` |
-
-`Address` supports base58 encoding/decoding and comparison.
-
-## `no_std` by default
-
-Anchor programs use `std`. Quasar programs are `#![no_std]` on-chain (`std` is available during tests via `cfg_attr`).
-
-- No `String`, `Vec`, or `HashMap` from `std`. Quasar provides `String<P, N>` and `Vec<T, P, N>` for dynamic account fields, where `P` is the length-prefix type and `N` is the max capacity.
-- No `println!()` on-chain. Use `log()` (re-exported from `solana_program_log` in the prelude).
-- No `format!()`. Enable the `debug` feature for verbose error messages that include account names and constraint indices.
-
-## Pod types
-
-Alignment-1 wrappers for numeric types in the generated zero-copy companion structs:
-
-| Standard type | Pod type |
-|---|---|
-| `u16` / `i16` | `PodU16` / `PodI16` |
-| `u32` / `i32` | `PodU32` / `PodI32` |
-| `u64` / `i64` | `PodU64` / `PodI64` |
-| `u128` / `i128` | `PodU128` / `PodI128` |
-| `bool` | `PodBool` |
-
-In `#[account]` structs, use standard Rust types (`u64`, `bool`, etc.) -- the macro converts them to Pod types in the generated companion. You only need Pod types when working with the zero-copy layer directly.
-
-## Migration checklist
-
-1. **Create a new Quasar project** with `quasar init` and copy your `instructions/`, `state.rs`, and `events.rs` files.
-2. **Replace imports:** `anchor_lang::prelude::*` -> `quasar_lang::prelude::*`.
-3. **Replace `Pubkey` with `Address`** everywhere. `.key()` -> `*account.address()`.
-4. **Add explicit discriminators** to `#[account]`, `#[instruction]`, and `#[event]`. Account discriminators must have at least one non-zero byte.
-5. **Convert field types** to references: `Signer<'info>` -> `&'info Signer`, `Account<'info, T>` -> `&'info Account<T>`.
-6. **Remove `#[account(mut)]`** -- use `&'info mut` references instead.
-7. **Update PDA seeds** -- pass field names directly instead of `.key().as_ref()`.
-8. **Convert CPI calls** from `CpiContext` to method-style (`.transfer()`, `.mint_to()`) followed by `.invoke()` or `.invoke_signed()`.
-9. **Update events** -- add explicit discriminators, replace `Pubkey` fields with `Address`.
-10. **Update error codes** -- if you want Anchor-compatible numbering, add `= 6000` to the first variant.
-11. **Add `#![cfg_attr(not(test), no_std)]`** to `lib.rs` and remove `std` dependencies from on-chain code.
-12. **Build and fix** with `quasar build`. The compiler catches remaining type mismatches.
-
-## Further reading
-
-- [Quickstart](./quickstart) -- Set up Quasar and scaffold a project.
-- [Account Layout](/docs/zero-copy/account-layout) -- How zero-copy companion structs work.
-- [Pod Types](/docs/zero-copy/pod-types) -- Alignment-1 types in detail.
-- [Account Types](/docs/references/account-types) -- `Signer`, `Account<T>`, `Program<T>`, `UncheckedAccount`, `Sysvar<T>`, and more.
-- [Account Constraints](/docs/references/account-constraints) -- Full constraint reference.
-- [Build an Escrow](/docs/guides/build-an-escrow) -- Complete program with token CPIs, PDAs, events, and tests.
+|--------|--------|
+| `anchor_lang::prelude::*` | `quasar_lang::prelude::*` |
+| `Context<T>` | `Ctx<T>` |
+| `Result<()>` | `Result<(), ProgramError>` |
+| `Signer<'info>` | `&'info Signer` |
+| `#[account(mut)]` | `&'info mut` |
+| `#[account]` | `#[account(discriminator = N)]` |
+| Discriminator optional | `#[instruction(discriminator = N)]` required |
+| `CpiContext::new(...)` | `.transfer(...).invoke()` |
+| Manual PDA seeds | `bumps.name_seeds()` auto-generated |
+| `String` / `Vec` (heap) | `String<'a, MAX>` / `Vec<'a, T, MAX>` (zero-copy) |

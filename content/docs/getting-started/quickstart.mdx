@@ -5,19 +5,11 @@ description: Build your first Quasar program in minutes.
 
 ## Scaffold a new project
 
-Run `quasar init` to create a new project:
-
 ```bash
 quasar init my-program
 ```
 
-The CLI prompts for three choices:
-
-1. **Toolchain** -- `solana` (default) or `upstream`. See [Installation](./installation) for details.
-2. **Testing framework** -- `Rust` (default), `TypeScript`, `Kit`, `Rust (Mollusk)`, or `None`.
-3. **Template** -- `Minimal` (single-file program) or `Full` (separate modules for state, errors, and instructions).
-
-Skip all prompts:
+The CLI prompts for toolchain, testing framework, and template. Skip prompts with flags:
 
 ```bash
 quasar init my-program --toolchain solana --framework quasarsvm-rust --template minimal
@@ -27,163 +19,48 @@ quasar init my-program --toolchain solana --framework quasarsvm-rust --template 
 
 | | Minimal | Full |
 |---|---------|------|
-| **Use when** | Quick start, prototyping, simple programs | Production programs with multiple instructions |
+| **Use when** | Quick start, prototyping | Production programs with multiple instructions |
 | **Structure** | Everything in `src/lib.rs` | `state.rs`, `errors.rs`, `instructions/` modules |
-| **Best for** | Learning Quasar, single-instruction programs | Programs with state, errors, and many handlers |
 
-### Minimal
+## Key macros
 
-A single `src/lib.rs` with accounts, logic, and the program entrypoint all in one file. Run `quasar add -i <name>` to split into modules when you outgrow it.
+| Macro | What it does |
+|-------|-------------|
+| `declare_id!` | Sets the program's on-chain address |
+| `#[program]` | Generates the entrypoint and dispatch table |
+| `#[instruction(discriminator = N)]` | Routes an instruction by its discriminator |
+| `#[derive(Accounts)]` | Generates account parsing and validation |
+| `#[account(discriminator = N)]` | Defines an on-chain account type |
+| `#[error_code]` | Defines custom program errors (`ProgramError::Custom`) |
 
-### Full
+## Scaffold with `quasar add`
 
-Separate files for state (`src/state.rs`), errors (`src/errors.rs`), and instructions (`src/instructions/*.rs`). Each instruction handler gets its own file, wired through `mod.rs`.
-
-## Anatomy of a Quasar program
-
-The generated `src/lib.rs` (minimal template):
-
-```rust
-#![cfg_attr(not(test), no_std)]
-
-use quasar_lang::prelude::*;
-
-declare_id!("<YOUR_PROGRAM_ID>");
-
-#[derive(Accounts)]
-pub struct Initialize<'info> {
-    pub payer: &'info mut Signer,
-    pub system_program: &'info Program<System>,
-}
-
-impl<'info> Initialize<'info> {
-    #[inline(always)]
-    pub fn initialize(&self) -> Result<(), ProgramError> {
-        Ok(())
-    }
-}
-
-#[program]
-mod my_program {
-    use super::*;
-
-    #[instruction(discriminator = 0)]
-    pub fn initialize(ctx: Ctx<Initialize>) -> Result<(), ProgramError> {
-        ctx.accounts.initialize()
-    }
-}
-```
-
-- **`#![cfg_attr(not(test), no_std)]`** -- `no_std` on-chain, `std` during tests.
-- **`declare_id!`** -- Program's on-chain address. The CLI generates a keypair in `target/deploy/` and embeds the public key here.
-- **`#[program]`** -- Generates the dispatch table, entrypoint, and (off-chain) a client module.
-- **`#[instruction(discriminator = 0)]`** -- Each instruction gets an explicit discriminator. Accepts a single integer (`discriminator = 0`) or a byte array (`discriminator = [1, 0, 0, 0]`). Must be unique within a program.
-- **`Ctx<Initialize>`** -- Typed context containing the validated `Initialize` accounts struct and PDA bumps.
-- **`#[derive(Accounts)]`** -- Generates parsing and validation. Each field is a typed account reference with automatic signer, ownership, and mutability checks.
-- **`&'info mut Signer`** -- Mutable reference to a signer. `mut` means writable; `Signer` requires a signature.
-- **`&'info Program<System>`** -- Reference to the System program, validated by address.
-- **The `impl` block** -- Business logic. Accounts are already parsed and validated before your code runs.
-
-## Adding to your program
-
-Use `quasar add` to scaffold new components. Flags can be combined:
+Add instructions, state, and errors to your project. Flags can be combined:
 
 ```bash
 quasar add -i transfer -s vault -e access
 ```
 
-### Add an instruction
+| Flag | What it creates |
+|------|----------------|
+| `-i transfer` | `src/instructions/transfer.rs` + wires it into `lib.rs` with the next discriminator |
+| `-s vault` | `#[account]` struct in `src/state.rs` with auto-incremented discriminator |
+| `-e access` | `#[error_code]` enum in `src/errors.rs` |
+
+Works on both templates. On minimal projects, `-i` creates the `src/instructions/` directory and wires the module automatically.
+
+## Build, test, deploy
 
 ```bash
-quasar add -i transfer
-```
+quasar build                # compile → target/deploy/my_program.so
+quasar build --debug        # with debug symbols
 
-Creates `src/instructions/transfer.rs`, updates `mod.rs`, and adds the entry to the `#[program]` block with the next available discriminator. Works on both minimal and full projects -- if `src/instructions/` doesn't exist, it creates the directory and wires up the module in `lib.rs`.
-
-### Add a state account
-
-```bash
-quasar add -s vault
-```
-
-Appends a new `#[account]` struct to `src/state.rs` (creates the file if it doesn't exist). Auto-increments the discriminator:
-
-```rust
-#[account(discriminator = 2)]
-pub struct Vault {
-    pub authority: Address,
-}
-```
-
-### Add an error enum
-
-```bash
-quasar add -e access
-```
-
-Appends a new `#[error_code]` enum to `src/errors.rs` (creates the file if it doesn't exist):
-
-```rust
-#[error_code]
-pub enum Access {
-    Unknown,
-}
-```
-
-## Build the program
-
-```bash
-quasar build
-```
-
-Runs the build and generates the IDL and client code in `target/`.
-
-Output: `target/deploy/my_program.so`.
-
-Build with debug logging (verbose constraint failure messages):
-
-```bash
-quasar build --debug
-```
-
-## Test the program
-
-```bash
-quasar test
-```
-
-Builds the program first (unless `--no-build` is passed), then runs the test suite.
-
-Filter by name:
-
-```bash
-quasar test --filter test_initialize
-```
-
-Pass features through to the build:
-
-```bash
+quasar test                 # builds then runs the test suite
+quasar test -f test_init    # filter by name
 quasar test --features debug
-```
 
-## Deploy the program
-
-```bash
-quasar deploy --url devnet
-```
-
-Builds the program, then deploys the compiled `.so` to the specified cluster. Reads the keypair from `target/deploy/`.
-
-Specify a custom payer or program keypair:
-
-```bash
-quasar deploy --url devnet --keypair ./payer.json --program-keypair ./program.json
-```
-
-Skip the build step if you've already built:
-
-```bash
-quasar deploy --url devnet --skip-build
+quasar deploy --url devnet  # builds then deploys
+quasar deploy --url devnet --skip-build --keypair ./payer.json
 ```
 
 ## Next steps
