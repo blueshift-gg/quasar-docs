@@ -245,6 +245,9 @@ quasar deploy [OPTIONS]
 |------|-------------|
 | `--program-keypair <KEYPAIR>` | Path to the program keypair (default: `target/deploy/<name>-keypair.json`) |
 | `--upgrade-authority <KEYPAIR>` | Upgrade authority keypair (default: Solana CLI default keypair) |
+| `--keypair <KEYPAIR>` | Payer keypair to use for deployment |
+| `--url <CLUSTER>` | Cluster to deploy to (e.g. `devnet`, `mainnet-beta`, or an RPC URL) |
+| `--skip-build` | Skip the build step and deploy the existing binary |
 
 The program binary is auto-detected from `target/deploy/`.
 
