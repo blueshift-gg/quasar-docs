@@ -47,30 +47,31 @@ quasar init my-app --framework mollusk --template full
 
 ---
 
-### `quasar new instruction`
+### `quasar add`
 
-Generate a new instruction handler with auto-incremented discriminator.
+Add instructions, state, and errors to your project. Flags can be combined in a single invocation.
 
 ```
-quasar new instruction <NAME>
+quasar add [OPTIONS]
 ```
 
-| Argument | Description |
-|----------|-------------|
-| `NAME` | Instruction name in `snake_case` (e.g., `transfer`, `create_pool`) |
+| Flag | Description |
+|------|-------------|
+| `-i, --instruction <NAME>` | Create `src/instructions/<name>.rs` and wire it into `lib.rs` with the next auto-incremented discriminator |
+| `-s, --state <NAME>` | Add an `#[account]` struct to `src/state.rs` with an auto-incremented discriminator |
+| `-e, --error <NAME>` | Add an `#[error_code]` enum to `src/errors.rs` |
 
-This command:
-1. Creates `src/instructions/<name>.rs` with an `Accounts` struct and handler method
-2. Adds `mod <name>;` and `pub use <name>::*;` to `src/instructions/mod.rs`
-3. Inserts a new `#[instruction(discriminator = N)]` entry in `src/lib.rs` with `N` set to one more than the highest existing discriminator
+Works on both `minimal` and `full` templates. On minimal projects, `-i` creates the `src/instructions/` directory and wires the module automatically.
 
-**Example:**
+**Examples:**
 
 ```bash
-quasar new instruction withdraw
+quasar add -i transfer                      # Add a single instruction
+quasar add -i transfer -s vault -e access   # Add instruction, state, and error in one go
+quasar add -s pool                          # Add a state account
 ```
 
-Creates `src/instructions/withdraw.rs`:
+Running `quasar add -i withdraw` creates `src/instructions/withdraw.rs`:
 
 ```rust
 use quasar_lang::prelude::*;
