@@ -9,6 +9,28 @@ import { notFound } from 'next/navigation';
 import defaultMdxComponents from 'fumadocs-ui/mdx';
 import Image from 'next/image';
 import logoFull from '@/app/images/logo-full.webp';
+import { Fragment } from 'react';
+
+function ParsedDescription({ children }: { children?: string }) {
+  if (!children) return null;
+  const parts = children.split(/(`[^`]+`)/g);
+  return (
+    <DocsDescription>
+      {parts.map((part, i) =>
+        part.startsWith('`') && part.endsWith('`') ? (
+          <code
+            key={i}
+            className="border border-fd-border bg-fd-muted rounded-[5px] px-1.5 py-0.5 text-[14px] font-normal"
+          >
+            {part.slice(1, -1)}
+          </code>
+        ) : (
+          <Fragment key={i}>{part}</Fragment>
+        )
+      )}
+    </DocsDescription>
+  );
+}
 
 export default async function Page(props: {
   params: Promise<{ slug?: string[] }>;
@@ -29,7 +51,7 @@ export default async function Page(props: {
           )}
         </div>
       </DocsTitle>
-      <DocsDescription>{page.data.description}</DocsDescription>
+      <ParsedDescription>{page.data.description}</ParsedDescription>
       <DocsBody>
         <MDX components={{ ...defaultMdxComponents }} />
       </DocsBody>
