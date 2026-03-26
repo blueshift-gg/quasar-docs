@@ -7,6 +7,7 @@ import {
 } from 'fumadocs-ui/page';
 import { notFound } from 'next/navigation';
 import defaultMdxComponents from 'fumadocs-ui/mdx';
+import { Card, Cards } from '@/app/components/mdx-card';
 import Image from 'next/image';
 import logoFull from '@/app/images/logo-full.webp';
 import { Fragment } from 'react';
@@ -40,20 +41,25 @@ export default async function Page(props: {
   if (!page) notFound();
 
   const MDX = page.data.body;
-
+  const isHome = page.url === '/docs';
 
   return (
-    <DocsPage toc={page.data.toc} full={page.data.full}>
+    <DocsPage
+      toc={page.data.toc}
+      className={isHome ? 'use-full' : undefined}
+    >
       <DocsTitle>
         <div className='flex items-center gap-x-3'>
-          {page.url === "/docs" ? <Image src={logoFull} alt="Quasar" width={250} height={100} className='w-42' /> : (
+          {isHome ? <Image src={logoFull} alt="Quasar" width={250} height={100} className='w-42' /> : (
             page.data.title
           )}
         </div>
       </DocsTitle>
       <ParsedDescription>{page.data.description}</ParsedDescription>
       <DocsBody>
-        <MDX components={{ ...defaultMdxComponents }} />
+        <MDX
+          components={{ ...defaultMdxComponents, Card, Cards }}
+        />
       </DocsBody>
     </DocsPage>
   );

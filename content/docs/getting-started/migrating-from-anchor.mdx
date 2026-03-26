@@ -3,6 +3,8 @@ title: Migrating from Anchor
 description: What changes when you port an Anchor program to Quasar.
 ---
 
+![alt](/images/migrating-from-anchor.webp)
+
 Quasar is designed to feel like Anchor. `#[derive(Accounts)]`, `#[program]`, `seeds`, `bump`, `has_one`, `constraint`, `init`, `close`, `require!` -- all work the same way. The runtime difference: Quasar is zero-copy and `no_std`, so there is no deserialization and no heap allocation.
 
 ## Imports

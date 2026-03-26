@@ -5,36 +5,31 @@ description: Quasar is a Solana program development framework for writing blazin
 
 Quasar is a Solana program framework. Programs are `#![no_std]` by default -- accounts are pointer-cast directly from the SVM input buffer with no deserialization, no heap allocation, and no copies. You write `#[program]`, `#[account]`, and `#[derive(Accounts)]` like Anchor, but the generated code compiles down to near-hand-written CU efficiency.
 
-| Vault benchmark | **Quasar** | **Pinocchio** | **Anchor 0.32** |
-| --- | --- | --- | --- |
-| **Deposit CU** | **1,576** | - | 4,506 **(x2.86)** |
-| **Withdraw CU** | **411** | - | 4,088 **(x9.95)** |
-| **Binary size** | **5,848 bytes** | - | 185,384 bytes **(x31.7)** |
-
 ## Get Started
 
 <Cards>
-  <Card title="Installation" href="/docs/getting-started/installation">
+  <Card title="Installation" href="/docs/getting-started/installation" image="installation.webp">
     Install Quasar and configure your toolchain.
   </Card>
-  <Card title="Quickstart" href="/docs/getting-started/quickstart">
+  <Card title="Quickstart" href="/docs/getting-started/quickstart" image="quickstart.webp">
     Scaffold, build, test, and deploy your first program.
-  </Card>
-  <Card title="Migrating from Anchor" href="/docs/getting-started/migrating-from-anchor">
+  </Card>  
+  <Card title="Migrating from Anchor" href="/docs/getting-started/migrating-from-anchor" image="migrating-from-anchor.webp">
     Side-by-side mapping of every Anchor concept.
   </Card>
 </Cards>
 
+
 ## Features
 
 <Cards>
-  <Card title="CU Profiler & Flamegraphs" href="/docs/profiling/cu-profiler">
+  <Card title="CU Profiler & Flamegraphs" href="/docs/profiling/cu-profiler" image="flamegraph.webp">
     Per-function CU breakdown with delta tracking and interactive flamegraphs.
   </Card>
-  <Card title="QuasarSVM" href="/docs/testing/quasarsvm-rust">
+  <Card title="QuasarSVM" href="/docs/testing/quasarsvm-rust" image="quasarsvm.webp">
     Local SVM test harness in Rust and TypeScript. No validator required.
   </Card>
-  <Card title="TypeScript & Rust Clients" href="/docs/clients/typescript">
+  <Card title="TypeScript & Rust Clients" href="/docs/clients/typescript" image="typescript-rust-clients.webp">
     Auto-generated typed clients for web3.js, Kit, and Rust.
   </Card>
 </Cards>

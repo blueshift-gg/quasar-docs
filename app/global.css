@@ -43,7 +43,7 @@
   --color-fd-popover-foreground: hsl(240, 14%, 90%) !important;
   --color-fd-card: hsl(240, 10%, 9%) !important;
   --color-fd-card-foreground: hsl(240, 15%, 95%) !important;
-  --color-fd-primary: hsl(180, 100%, 70%) !important;
+  --color-fd-primary: hwb(180 40% 0%) !important;
   --color-fd-primary-foreground: hsla(240, 9%, 9%) !important;
   --color-fd-secondary: hsla(240, 10%, 15%, 1) !important;
   --color-fd-secondary-foreground: hsla(180, 100%, 80%) !important;
@@ -81,18 +81,33 @@ p {
   line-height: 1.6;
 }
 
-/* Cards — 3-column grid on docs landing */
-.grid[class*="grid-cols-2"]:has([data-card]) {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-@media (max-width: 768px) {
-  .grid[class*="grid-cols-2"]:has([data-card]) {
-    grid-template-columns: 1fr;
-  }
-}
-
-
 /* Inline code */
 :not(pre) > code {
   @apply text-fd-accent-foreground ;
+}
+
+
+h1, h2, h3 {
+  @apply font-medium;
+}
+
+
+.grid[class*="grid-cols-2"]:has([data-card]) {
+  @apply xl:grid-cols-3;
+}
+
+#nd-sidebar {
+  @apply w-max;
+}
+
+article#nd-page {
+  @apply max-w-[800px];
+}
+
+html:has(.use-full) #nd-toc {
+  @apply hidden!;
+}
+
+.use-full {
+  @apply xl:max-w-none! xl:w-[calc(100%+var(--fd-toc-width))]!;
 }
