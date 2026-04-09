@@ -29,8 +29,8 @@ function normalizeText(text?: string | null) {
 }
 
 function toLLMMarkdownPath(url: string) {
-  if (url === '/docs' || url === '/docs.mdx') {
-    return '/docs.mdx';
+  if (url === '/docs') {
+    return url;
   }
 
   return url.endsWith('.mdx') ? url : `${url}.mdx`;
