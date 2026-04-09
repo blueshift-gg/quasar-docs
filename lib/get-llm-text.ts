@@ -9,7 +9,7 @@ const llmMarkdownContentType = 'text/markdown; charset=utf-8';
 export { llmMarkdownContentType, rewriteDocLinksToMarkdown, toLLMMarkdownPath };
 
 export async function getLLMText(page: DocsPage) {
-  const processed = rewriteDocLinksToMarkdown(await page.data.getText('processed'));
+  const processed = rewriteDocLinksToMarkdown(normalizeMarkdownSpacing(await page.data.getText('processed')));
   const description = normalizeText(page.data.description);
   const lines = [`# ${page.data.title} (${toLLMMarkdownPath(page.url)})`];
 
@@ -40,4 +40,8 @@ function rewriteDocLinksToMarkdown(text: string) {
   return text.replace(/\]\((\/docs(?:\/[^)\s]*)?)\)/g, (_match, url: string) => {
     return `](${toLLMMarkdownPath(url)})`;
   });
+}
+
+function normalizeMarkdownSpacing(text: string) {
+  return text.replace(/\n{3,}/g, '\n\n').trim();
 }
