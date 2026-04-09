@@ -5,8 +5,19 @@ const config = {
   reactStrictMode: true,
   images: {
     qualities: [95],
-  
-  }
+  },
+  async rewrites() {
+    return [
+      {
+        source: '/docs.mdx',
+        destination: '/llms.mdx/docs',
+      },
+      {
+        source: '/docs/:path*.mdx',
+        destination: '/llms.mdx/docs/:path*',
+      },
+    ];
+  },
 };
 
 const withMDX = createMDX();
