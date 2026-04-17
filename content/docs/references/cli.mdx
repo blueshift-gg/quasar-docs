@@ -47,30 +47,31 @@ quasar init my-app --framework mollusk --template full
 
 ---
 
-### `quasar new instruction`
+### `quasar add`
 
-Generate a new instruction handler with auto-incremented discriminator.
+Add instructions, state, and errors to your project. Flags can be combined in a single invocation.
 
 ```
-quasar new instruction <NAME>
+quasar add [OPTIONS]
 ```
 
-| Argument | Description |
-|----------|-------------|
-| `NAME` | Instruction name in `snake_case` (e.g., `transfer`, `create_pool`) |
+| Flag | Description |
+|------|-------------|
+| `-i, --instruction <NAME>` | Create `src/instructions/<name>.rs` and wire it into `lib.rs` with the next auto-incremented discriminator |
+| `-s, --state <NAME>` | Add an `#[account]` struct to `src/state.rs` with an auto-incremented discriminator |
+| `-e, --error <NAME>` | Add an `#[error_code]` enum to `src/errors.rs` |
 
-This command:
-1. Creates `src/instructions/<name>.rs` with an `Accounts` struct and handler method
-2. Adds `mod <name>;` and `pub use <name>::*;` to `src/instructions/mod.rs`
-3. Inserts a new `#[instruction(discriminator = N)]` entry in `src/lib.rs` with `N` set to one more than the highest existing discriminator
+Works on both `minimal` and `full` templates. On minimal projects, `-i` creates the `src/instructions/` directory and wires the module automatically.
 
-**Example:**
+**Examples:**
 
 ```bash
-quasar new instruction withdraw
+quasar add -i transfer                      # Add a single instruction
+quasar add -i transfer -s vault -e access   # Add instruction, state, and error in one go
+quasar add -s pool                          # Add a state account
 ```
 
-Creates `src/instructions/withdraw.rs`:
+Running `quasar add -i withdraw` creates `src/instructions/withdraw.rs`:
 
 ```rust
 use quasar_lang::prelude::*;
@@ -145,6 +146,7 @@ quasar test [OPTIONS]
 | `-f, --filter <PATTERN>` | Only run tests whose name matches the pattern |
 | `-w, --watch` | Watch `src/` for changes and re-run tests automatically |
 | `--no-build` | Skip the build step (use existing binary) |
+| `--features <FEATURES>` | Cargo features to enable (passed through to the build command) |
 
 Test framework behavior:
 - **Rust** (`mollusk`, `quasarsvm-rust`): Runs `cargo test` and parses output
@@ -158,6 +160,7 @@ quasar test --filter deposit      # Only run tests matching "deposit"
 quasar test --watch               # Auto-test on changes
 quasar test --no-build            # Skip build, test existing binary
 quasar test --debug --filter pda  # Debug build, filtered tests
+quasar test --features debug      # Enable Cargo features
 ```
 
 ---
@@ -242,6 +245,9 @@ quasar deploy [OPTIONS]
 |------|-------------|
 | `--program-keypair <KEYPAIR>` | Path to the program keypair (default: `target/deploy/<name>-keypair.json`) |
 | `--upgrade-authority <KEYPAIR>` | Upgrade authority keypair (default: Solana CLI default keypair) |
+| `--keypair <KEYPAIR>` | Payer keypair to use for deployment |
+| `--url <CLUSTER>` | Cluster to deploy to (e.g. `devnet`, `mainnet-beta`, or an RPC URL) |
+| `--skip-build` | Skip the build step and deploy the existing binary |
 
 The program binary is auto-detected from `target/deploy/`.
 
