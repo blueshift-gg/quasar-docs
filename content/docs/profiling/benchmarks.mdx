@@ -39,7 +39,9 @@ Both are useful: the profiler for fast iteration and hotspot identification, run
 
 **Minimize CPI** — each cross-program invocation has fixed overhead. When you own the accounts, direct lamport manipulation is cheaper than a system program transfer.
 
-**Store bumps** — `find_program_address` searches for the bump (expensive). If the bump is stored in the account, use `bump = expr` to verify it directly (cheap).
+**Store bumps** — `find_program_address` searches for the bump. A typed-seeds
+account with a `bump: u8` field can verify existing accounts through the stored
+bump after initialization.
 
 **Use `--expand` and `--watch`** — find the widest bars in the flamegraph, optimize them, and catch regressions as you edit:
 

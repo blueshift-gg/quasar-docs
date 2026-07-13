@@ -68,12 +68,15 @@ The iterator caches accounts as it walks, enabling O(1) duplicate resolution. Pr
 
 ## Real example: multisig creation
 
+The multisig state declares `#[seeds(b"multisig", creator: Address)]` on
+`MultisigConfig`.
+
 ```rust
 #[derive(Accounts)]
 pub struct Create<'info> {
     #[account(mut)]
     pub creator: Signer,
-    #[account(init, mut, payer = creator, seeds = [b"multisig", creator], bump)]
+    #[account(init, mut, payer = creator, address = MultisigConfig::seeds(creator.address()))]
     pub config: Account<MultisigConfig<'info>>,
     pub rent: Sysvar<Rent>,
     pub system_program: Program<SystemProgram>,
@@ -126,16 +129,19 @@ Remaining accounts are unchecked by default -- the handler explicitly verifies `
 ## Real example: multisig execution
 
 ```rust
+#[derive(Seeds)]
+#[seeds(b"vault", config: Address)]
+pub struct MultisigVaultPda;
+
 #[derive(Accounts)]
 pub struct ExecuteTransfer<'info> {
     #[account(
         has_one = creator,
-        seeds = [b"multisig", creator],
-        bump = config.bump
+        address = MultisigConfig::seeds(creator.address())
     )]
     pub config: Account<MultisigConfig<'info>>,
     pub creator: UncheckedAccount,
-    #[account(mut, seeds = [b"vault", config], bump)]
+    #[account(mut, address = MultisigVaultPda::seeds(config.address()))]
     pub vault: UncheckedAccount,
     #[account(mut)]
     pub recipient: UncheckedAccount,
@@ -171,10 +177,10 @@ impl<'info> ExecuteTransfer<'info> {
             return Err(ProgramError::MissingRequiredSignature);
         }
 
-        let seeds = bumps.vault_seeds();
+        let vault_signer = self.vault_signer(bumps);
         self.system_program
             .transfer(&self.vault, &self.recipient, amount)
-            .invoke_signed(&seeds)
+            .invoke_signed(&vault_signer)
     }
 }
 ```

@@ -7,7 +7,7 @@ Build a SOL vault that lets users deposit SOL into a PDA and withdraw it later. 
 
 You will learn to:
 
-- Define account structs with PDA seeds and constraints
+- Declare and validate a typed PDA seed layout
 - Transfer SOL via system program CPI
 - Withdraw lamports directly from a PDA
 - Test with Mollusk
@@ -113,11 +113,15 @@ Create `instructions/deposit.rs`:
 ```rust
 use quasar_lang::prelude::*;
 
+#[derive(Seeds)]
+#[seeds(b"vault", user: Address)]
+pub struct VaultPda;
+
 #[derive(Accounts)]
 pub struct Deposit {
     #[account(mut)]
     pub user: Signer,
-    #[account(mut, seeds = [b"vault", user], bump)]
+    #[account(mut, address = VaultPda::seeds(user.address()))]
     pub vault: UncheckedAccount,
     pub system_program: Program<SystemProgram>,
 }
@@ -137,7 +141,7 @@ impl Deposit {
 `#[derive(Accounts)]` generates deserialization and validation. Each field:
 
 - **`user: Signer`** -- The wallet depositing SOL. `Signer` verifies the transaction signature. `#[account(mut)]` requires a writable account because its lamports decrease during transfer.
-- **`vault: UncheckedAccount`** -- The vault PDA receiving SOL. `seeds = [b"vault", user]` verifies the PDA derivation. `bump` derives and stores the bump seed in `ctx.bumps`. We use `UncheckedAccount` because the vault holds only lamports -- no data to deserialize.
+- **`vault: UncheckedAccount`** -- The vault PDA receiving SOL. `address = VaultPda::seeds(user.address())` verifies the typed PDA derivation and records the bump in `ctx.bumps.vault`. We use `UncheckedAccount` because the vault holds only lamports -- no data to deserialize.
 - **`system_program: Program<SystemProgram>`** -- Required for the transfer CPI. `Program<SystemProgram>` validates this is the system program.
 
 ### The handler
@@ -159,13 +163,13 @@ self.system_program
 Create `instructions/withdraw.rs`:
 
 ```rust
-use quasar_lang::prelude::*;
+use {super::deposit::VaultPda, quasar_lang::prelude::*};
 
 #[derive(Accounts)]
 pub struct Withdraw {
     #[account(mut)]
     pub user: Signer,
-    #[account(mut, seeds = [b"vault", user], bump)]
+    #[account(mut, address = VaultPda::seeds(user.address()))]
     pub vault: UncheckedAccount,
 }
 
@@ -212,7 +216,10 @@ The vault PDA is derived from two seeds: `"vault"` and the user's public key, so
 vault_address = PDA(["vault", user_pubkey], program_id)
 ```
 
-`seeds = [b"vault", user]` generates code to derive the PDA, verify the passed-in account matches, and store the bump in `ctx.bumps`. See [Program Derived Addresses](/docs/core-concepts/pda).
+`#[seeds(b"vault", user: Address)]` declares the seed layout once.
+`VaultPda::seeds(user.address())` supplies the typed value for each instruction,
+verifies the passed account, and records the bump in `ctx.bumps`. See [Program
+Derived Addresses](/docs/core-concepts/pda).
 
 ## Testing with Mollusk
 

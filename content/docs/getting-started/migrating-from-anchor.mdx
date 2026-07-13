@@ -5,7 +5,9 @@ description: What changes when you port an Anchor program to Quasar.
 
 ![alt](/images/migrating-from-anchor.webp)
 
-Quasar is designed to feel like Anchor. `#[derive(Accounts)]`, `#[program]`, `seeds`, `bump`, `has_one`, `constraint`, `init`, `close`, `require!` -- all work the same way. The runtime difference: Quasar is zero-copy and `no_std`, so there is no deserialization and no heap allocation.
+Quasar shares Anchor's high-level accounts and instruction model, but v0.1 has
+its own account directive grammar. It is also zero-copy and `no_std`, so there
+is no deserialization and no heap allocation.
 
 ## Imports
 
@@ -44,8 +46,7 @@ pub struct Take {
         has_one = maker,
         constraint = escrow.receive > 0,
         close = taker,
-        seeds = [b"escrow", maker],
-        bump = escrow.bump
+        address = Escrow::seeds(maker.address())
     )]
     pub escrow: Account<Escrow>,
     #[account(mut)]
@@ -60,12 +61,13 @@ pub struct Take {
 | `Signer<'info>` | `Signer` |
 | `Account<'info, T>` | `Account<T>` |
 | `#[account(mut)]` attribute | `#[account(mut)]` attribute |
-| `seeds = [b"escrow", maker.key().as_ref()]` | `seeds = [b"escrow", maker]` -- field name directly |
+| `seeds = [b"escrow", maker.key().as_ref()], bump` | `#[seeds(b"escrow", maker: Address)]` on `Escrow`, then `address = Escrow::seeds(maker.address())` on the field |
 
 ## Account types
 
 ```rust
 #[account(discriminator = 1)]
+#[seeds(b"escrow", maker: Address)]
 pub struct Escrow {
     pub maker: Address,
     pub mint_a: Address,
@@ -94,18 +96,20 @@ self.token_program
 
 ```rust
 // PDA-signed transfer + close
-let seeds = bumps.escrow_seeds();
+let escrow_signer = self.escrow_signer(bumps);
 
 self.token_program
     .transfer(&self.vault_ta_a, &self.taker_ta_a, &self.escrow, amount)
-    .invoke_signed(&seeds)?;
+    .invoke_signed(&escrow_signer)?;
 
 self.vault_ta_a
     .close(&self.token_program, &self.taker, &self.escrow)
-    .invoke_signed(&seeds)
+    .invoke_signed(&escrow_signer)
 ```
 
-`#[derive(Accounts)]` generates seed helpers on the bumps struct -- `bumps.escrow_seeds()` returns the full seeds array ready for `invoke_signed`. No manual seed construction needed.
+`#[derive(Accounts)]` generates `self.escrow_signer(bumps)` from the field's
+typed address constraint. It rebuilds the declared seeds and appends the
+verified bump for `invoke_signed`.
 
 ## Events
 
@@ -173,5 +177,5 @@ Use `log()` instead of `println!()` for on-chain logging.
 | `#[account]` | `#[account(discriminator = N)]` |
 | Discriminator optional | `#[instruction(discriminator = N)]` required |
 | `CpiContext::new(...)` | `.transfer(...).invoke()` |
-| Manual PDA seeds | `bumps.name_seeds()` auto-generated |
+| Field-level `seeds` / `bump` | Typed `#[seeds(...)]`, `address = Type::seeds(...)`, and `self.field_signer(bumps)` |
 | `String` / `Vec` (heap) | `String<'a, MAX>` / `Vec<'a, T, MAX>` (zero-copy) |

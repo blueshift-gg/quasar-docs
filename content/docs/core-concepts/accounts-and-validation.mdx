@@ -137,6 +137,7 @@ For fixed-size fields:
 
 ```rust
 #[account(discriminator = 1)]
+#[seeds(b"escrow", maker: Address)]
 pub struct Escrow {
     pub maker: Address,
     pub mint_a: Address,
@@ -212,13 +213,13 @@ Both need a payer. If your struct has a field named `payer`, it's auto-detected.
 
 ```rust
 // payer auto-detected from the `payer` field
-#[account(init, seeds = [b"escrow", payer], bump)]
+#[account(init, address = Escrow::seeds(payer.address()))]
 pub escrow: Account<Escrow>,
 #[account(mut)]
 pub payer: Signer,
 
 // explicit payer when the field has a different name
-#[account(init, payer = maker, seeds = [b"escrow", maker], bump)]
+#[account(init, payer = maker, address = Escrow::seeds(maker.address()))]
 pub escrow: Account<Escrow>,
 #[account(mut)]
 pub maker: Signer,
@@ -228,23 +229,31 @@ pub maker: Signer,
 pub taker_ta_a: Account<Token>,
 ```
 
-### `seeds` / `bump`
+### Typed seeds and `address`
 
-PDA derivation and verification. `seeds` defines the seed array, `bump` controls how the bump seed is resolved.
-
-Use `bump` alone on `init` to find the canonical bump (calls `find_program_address`). The discovered bump is stored in `ctx.bumps.<field_name>` so you can save it in account data. On subsequent instructions, use `bump = <expr>` with the stored bump to verify the PDA without re-searching -- this saves ~2000 CUs:
+Declare the PDA layout once on the account type, then bind fields to it with an
+address constraint:
 
 ```rust
-// First time: find and store the bump
-#[account(init, payer = maker, seeds = [b"escrow", maker], bump)]
+#[account(discriminator = 1)]
+#[seeds(b"escrow", maker: Address)]
+pub struct Escrow {
+    pub maker: Address,
+    pub bump: u8,
+}
+
+// Initialization discovers the canonical bump.
+#[account(init, payer = maker, address = Escrow::seeds(maker.address()))]
 pub escrow: Account<Escrow>,
 
-// Later: use the stored bump (cheaper)
-#[account(mut, seeds = [b"escrow", maker], bump = escrow.bump)]
+// Existing accounts use the same typed address expression.
+#[account(mut, address = Escrow::seeds(maker.address()))]
 pub escrow: Account<Escrow>,
 ```
 
-Seed expressions that reference account fields are automatically converted to their address bytes -- write `maker` not `maker.address().as_ref()`. You can also use byte literals (`b"prefix"`), integer bytes (`&vault_id.to_le_bytes()`), or any `&[u8]` expression.
+The verified bump is stored in `ctx.bumps.<field_name>`. When the account type
+contains a `bump: u8` field, saving that value during initialization lets Quasar
+use the stored-bump verification path for later instructions.
 
 ### `has_one`
 
@@ -300,7 +309,7 @@ Closes an account after the instruction handler returns. Zeros the discriminator
 Because `close` runs in the epilogue (after your handler), you can still read the account's data during execution:
 
 ```rust
-#[account(mut, close = taker, seeds = [b"escrow", maker], bump = escrow.bump)]
+#[account(mut, close = taker, address = Escrow::seeds(maker.address()))]
 pub escrow: Account<Escrow>,
 ```
 
@@ -335,7 +344,8 @@ See the [Account Constraints Reference](/docs/references/account-constraints) fo
 
 ## The Bumps Struct
 
-`#[derive(Accounts)]` generates a bumps struct with one `u8` field per PDA and `*_seeds()` methods for CPI signing:
+`#[derive(Accounts)]` generates a bumps struct with one `u8` field per typed PDA
+and a `<field>_signer` method on the accounts struct:
 
 ```rust
 // Auto-generated for Take
@@ -343,24 +353,23 @@ pub struct TakeBumps {
     pub escrow: u8,
 }
 
-impl TakeBumps {
-    pub fn escrow_seeds(&self) -> [Seed; 3] { /* [b"escrow", maker, &[bump]] */ }
-}
+// Generated on Take:
+// pub fn escrow_signer(&self, bumps: &TakeBumps) -> impl CpiSignerSeeds
 ```
 
 Use it in impl blocks:
 
 ```rust
 pub fn withdraw_tokens_and_close(&mut self, bumps: &TakeBumps) -> Result<(), ProgramError> {
-    let seeds = bumps.escrow_seeds();
+    let escrow_signer = self.escrow_signer(bumps);
 
     self.token_program
         .transfer(&self.vault_ta_a, &self.taker_ta_a, &self.escrow, self.vault_ta_a.amount())
-        .invoke_signed(&seeds)?;
+        .invoke_signed(&escrow_signer)?;
 
     self.vault_ta_a
         .close(&self.token_program, &self.taker, &self.escrow)
-        .invoke_signed(&seeds)
+        .invoke_signed(&escrow_signer)
 }
 ```
 
@@ -370,13 +379,13 @@ When an instruction is invoked:
 
 1. **Header validation** -- signer, writable, executable, and duplicate flags are checked against compile-time expectations in a single constant comparison per account.
 2. **Typed construction** -- each field is constructed from its `AccountView`.
-3. **PDA verification and initialization** -- `init` / `init_if_needed` accounts are created, PDA addresses are verified.
+3. **PDA verification and initialization** -- typed `address = Type::seeds(...)` constraints are verified and initializing accounts are created.
 4. **Constraint evaluation** -- `has_one`, `constraint`, and `address` checks run in declaration order.
 5. **Epilogue** -- after the handler returns, `close` operations execute.
 
 ## Next Steps
 
 - [Instructions](./instructions) -- the `#[instruction]` macro and argument handling
-- [Program Derived Addresses](./pda) -- PDA seeds, bumps, and verification
+- [Program Derived Addresses](./pda) -- typed seeds, bumps, and verification
 - [Cross-Program Invocations](./cpi) -- using accounts in CPI calls
 - [Account Constraints Reference](/docs/references/account-constraints) -- full attribute reference
