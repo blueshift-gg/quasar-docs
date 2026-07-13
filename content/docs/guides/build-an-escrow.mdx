@@ -182,7 +182,7 @@ Creates the escrow account, emits an event, and deposits tokens. `instructions/m
 use {
     crate::{events::MakeEvent, state::Escrow},
     quasar_lang::prelude::*,
-    quasar_spl::{Mint, Token, TokenCpi, TokenProgram},
+    quasar_spl::{accounts::token, Mint, Token, TokenCpi, TokenProgram},
 };
 
 #[derive(Accounts)]
@@ -195,9 +195,17 @@ pub struct Make {
     pub mint_b: Account<Mint>,
     #[account(mut)]
     pub maker_ta_a: Account<Token>,
-    #[account(init(idempotent), payer = maker, token::mint = mint_b, token::authority = maker)]
+    #[account(
+        init(idempotent),
+        payer = maker,
+        token(mint = mint_b, authority = maker, token_program = token_program)
+    )]
     pub maker_ta_b: Account<Token>,
-    #[account(init(idempotent), payer = maker, token::mint = mint_a, token::authority = escrow)]
+    #[account(
+        init(idempotent),
+        payer = maker,
+        token(mint = mint_a, authority = escrow, token_program = token_program)
+    )]
     pub vault_ta_a: Account<Token>,
     pub rent: Sysvar<Rent>,
     pub token_program: Program<TokenProgram>,
@@ -212,7 +220,7 @@ pub struct Make {
 - **`mint_a` / `mint_b`** -- The two token mints. `Account<Mint>` validates these are SPL mint accounts.
 - **`maker_ta_a`** -- Maker's existing token account for mint A (the deposited tokens).
 - **`maker_ta_b`** -- Maker's token account for mint B. `init(idempotent)` creates it if it doesn't exist and validates it if it does.
-- **`vault_ta_a`** -- Vault token account holding escrowed tokens. `token::authority = escrow` means only the escrow PDA can move tokens out via signed CPI.
+- **`vault_ta_a`** -- Vault token account holding escrowed tokens. `token(authority = escrow, ...)` means only the escrow PDA can move tokens out via signed CPI.
 - **`rent`, `token_program`, `system_program`** -- Required for account creation and token operations.
 
 ### The handlers
@@ -273,7 +281,7 @@ Handles the token swap and cleanup. `instructions/take.rs`:
 use {
     crate::{events::TakeEvent, state::Escrow},
     quasar_lang::prelude::*,
-    quasar_spl::{Mint, Token, TokenClose, TokenCpi, TokenProgram},
+    quasar_spl::{accounts::token, Mint, Token, TokenClose, TokenCpi, TokenProgram},
 };
 
 #[derive(Accounts)]
@@ -292,11 +300,19 @@ pub struct Take {
     pub maker: UncheckedAccount,
     pub mint_a: Account<Mint>,
     pub mint_b: Account<Mint>,
-    #[account(init(idempotent), payer = taker, token::mint = mint_a, token::authority = taker)]
+    #[account(
+        init(idempotent),
+        payer = taker,
+        token(mint = mint_a, authority = taker, token_program = token_program)
+    )]
     pub taker_ta_a: Account<Token>,
     #[account(mut)]
     pub taker_ta_b: Account<Token>,
-    #[account(init(idempotent), payer = taker, token::mint = mint_b, token::authority = maker)]
+    #[account(
+        init(idempotent),
+        payer = taker,
+        token(mint = mint_b, authority = maker, token_program = token_program)
+    )]
     pub maker_ta_b: Account<Token>,
     #[account(mut)]
     pub vault_ta_a: Account<Token>,
@@ -357,7 +373,7 @@ The maker can cancel and reclaim tokens. `instructions/refund.rs`:
 use {
     crate::{events::RefundEvent, state::Escrow},
     quasar_lang::prelude::*,
-    quasar_spl::{Mint, Token, TokenClose, TokenCpi, TokenProgram},
+    quasar_spl::{accounts::token, Mint, Token, TokenClose, TokenCpi, TokenProgram},
 };
 
 #[derive(Accounts)]
@@ -372,7 +388,11 @@ pub struct Refund {
     )]
     pub escrow: Account<Escrow>,
     pub mint_a: Account<Mint>,
-    #[account(init(idempotent), payer = maker, token::mint = mint_a, token::authority = maker)]
+    #[account(
+        init(idempotent),
+        payer = maker,
+        token(mint = mint_a, authority = maker, token_program = token_program)
+    )]
     pub maker_ta_a: Account<Token>,
     #[account(mut)]
     pub vault_ta_a: Account<Token>,

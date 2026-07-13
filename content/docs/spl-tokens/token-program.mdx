@@ -10,7 +10,10 @@ The `quasar-spl` crate provides zero-copy wrappers and typed CPI for the SPL Tok
 Two marker types: `Token` for token accounts (165 bytes) and `Mint` for mint accounts (82 bytes). Use them with `Account<T>`:
 
 ```rust
-use quasar_spl::{Mint, Token, TokenCpi, TokenProgram};
+use quasar_spl::{
+    accounts::{mint, token},
+    Mint, Token, TokenCpi, TokenProgram,
+};
 
 #[derive(Accounts)]
 pub struct TransferTokens {
@@ -74,26 +77,35 @@ All CPI methods work with `.invoke()` for regular signers and `.invoke_signed(&s
 
 ## Initializing Token Accounts
 
-Use `init` with `token::mint` and `token::authority` to declaratively create and initialize token accounts:
+Use `init` with `token(...)` to declare the mint, authority, and token program for a new token account:
 
 ```rust
-#[account(init, token::mint = mint, token::authority = payer)]
+#[account(init, token(mint = mint, authority = payer, token_program = token_program))]
 pub token_account: Account<Token>,
 ```
 
 This chains `System::create_account` + `InitializeAccount3` in a single step. For conditional creation, use `init(idempotent)` -- it skips creation if the account already exists and validates that mint and authority match:
 
 ```rust
-#[account(init(idempotent), payer = maker, token::mint = mint_a, token::authority = escrow)]
+#[account(
+    init(idempotent),
+    payer = maker,
+    token(mint = mint_a, authority = escrow, token_program = token_program)
+)]
 pub vault: Account<Token>,
 ```
 
 ## Initializing Mints
 
-Use `mint::decimals` and `mint::authority`. Optional `mint::freeze_authority`:
+Use `mint(...)` with an authority and token program. `decimals` and `freeze_authority` set the mint configuration:
 
 ```rust
-#[account(init, mint::decimals = 6, mint::authority = mint_authority)]
+#[account(init, mint(
+    decimals = 6,
+    authority = mint_authority,
+    freeze_authority = None,
+    token_program = token_program
+))]
 pub mint: Account<Mint>,
 ```
 

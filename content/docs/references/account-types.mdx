@@ -280,11 +280,14 @@ pub struct InterfaceAccount<T> {
 **Example:**
 
 ```rust
-use quasar_spl::{Mint, Token};
+use quasar_spl::{accounts::token, Mint, Token};
 
 #[derive(Accounts)]
 pub struct Deposit {
-    #[account(mut, token::mint = mint, token::authority = authority)]
+    #[account(
+        mut,
+        token(mint = mint, authority = authority, token_program = token_program)
+    )]
     pub vault: InterfaceAccount<Token>,
     pub mint: InterfaceAccount<Mint>,
     pub authority: Signer,

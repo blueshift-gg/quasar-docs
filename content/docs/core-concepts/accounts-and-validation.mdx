@@ -225,7 +225,11 @@ pub escrow: Account<Escrow>,
 pub maker: Signer,
 
 // Idempotent initialization for token accounts
-#[account(init(idempotent), payer = taker, token::mint = mint_a, token::authority = taker)]
+#[account(
+    init(idempotent),
+    payer = taker,
+    token(mint = mint_a, authority = taker, token_program = token_program)
+)]
 pub taker_ta_a: Account<Token>,
 ```
 
@@ -324,23 +328,41 @@ pub config: Account<MultisigConfig<'info>>,
 
 ### Token / Mint / ATA
 
-The `quasar-spl` crate provides specialized init attributes for SPL token accounts, mints, and associated token accounts. These handle the token-program-specific CPI setup automatically:
+The `quasar-spl` crate provides account behaviors for SPL token accounts, mints, and associated token accounts. Each behavior validates existing account data and supplies the token-program-specific CPI setup during initialization:
 
 ```rust
 // Token account -- initialized with a specific mint and authority
-#[account(init, payer = payer, token::mint = mint, token::authority = authority)]
+#[account(
+    init,
+    payer = payer,
+    token(mint = mint, authority = authority, token_program = token_program)
+)]
 pub vault: Account<Token>,
 
 // Mint -- initialized with decimals and mint authority
-#[account(init, payer = payer, mint::decimals = 6, mint::authority = authority)]
+#[account(
+    init,
+    payer = payer,
+    mint(decimals = 6, authority = authority, token_program = token_program)
+)]
 pub mint: Account<Mint>,
 
 // Associated token account -- derived from mint + owner
-#[account(init, payer = payer, associated_token::mint = mint, associated_token::authority = owner)]
+#[account(
+    init,
+    payer = payer,
+    associated_token(
+        mint = mint,
+        authority = owner,
+        token_program = token_program,
+        system_program = system_program,
+        ata_program = ata_program
+    )
+)]
 pub ata: Account<Token>,
 ```
 
-See the [Account Constraints Reference](/docs/references/account-constraints) for the full list including `mint::freeze_authority`, `metadata::*`, and `master_edition::*` attributes.
+See the [Account Constraints Reference](/docs/references/account-constraints) for the complete behavior arguments, including `freeze_authority` for `mint(...)`, plus the metadata and master-edition behaviors.
 
 ## The Bumps Struct
 

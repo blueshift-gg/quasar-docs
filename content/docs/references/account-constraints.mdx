@@ -323,32 +323,30 @@ Account that pays for (or receives excess from) reallocation.
 
 ---
 
-## SPL Token Constraints
+## SPL Token Account Behavior
 
-Used with `init` or `init(idempotent)` to initialize a token account. `token::mint` and `token::authority` must be specified together.
+`token(...)` validates a token account's mint and authority. With `init` or `init(idempotent)`, it supplies the values used to initialize the account.
 
-### `token::mint = <field>`
-
-Sets the mint for a newly initialized token account.
-
-| | |
-|---|---|
-| **Syntax** | `#[account(init, payer = p, token::mint = mint_field, token::authority = auth_field)]` |
-| **Requires** | `init` or `init(idempotent)`, paired with `token::authority` |
-
-### `token::authority = <field>`
-
-Sets the authority for a newly initialized token account.
+| Argument | Purpose | Required |
+|----------|---------|----------|
+| `mint = <field>` | Expected token mint | Yes |
+| `authority = <field>` | Expected token-account authority | Yes |
+| `token_program = <field>` | Token program used for initialization or explicit owner validation | For initialization |
 
 | | |
 |---|---|
-| **Syntax** | `#[account(init, payer = p, token::mint = mint_field, token::authority = auth_field)]` |
-| **Requires** | `init` or `init(idempotent)`, paired with `token::mint` |
+| **Syntax** | `#[account(token(mint = mint_field, authority = auth_field, token_program = token_program_field))]` |
 
 ```rust
+use quasar_spl::accounts::token;
+
 #[derive(Accounts)]
 pub struct InitTokenAccount {
-    #[account(init, payer = payer, token::mint = mint, token::authority = authority)]
+    #[account(
+        init,
+        payer = payer,
+        token(mint = mint, authority = authority, token_program = token_program)
+    )]
     pub vault_token: InterfaceAccount<Token>,
     pub mint: InterfaceAccount<Mint>,
     pub authority: Signer,
@@ -361,43 +359,36 @@ pub struct InitTokenAccount {
 
 ---
 
-## SPL Mint Constraints
+## SPL Mint Behavior
 
-Used with `init` to initialize a new mint account.
+`mint(...)` validates a mint's authority and any supplied configuration. With `init` or `init(idempotent)`, it configures the new mint.
 
-### `mint::decimals = <expr>`
-
-Sets the decimals for a newly initialized mint.
-
-| | |
-|---|---|
-| **Syntax** | `#[account(init, mint::decimals = EXPR, mint::authority = field)]` |
-
-### `mint::authority = <field>`
-
-Sets the mint authority for a newly initialized mint.
+| Argument | Purpose | Required |
+|----------|---------|----------|
+| `authority = <field>` | Expected mint authority | Yes |
+| `decimals = <expr>` | Expected decimals; initialization defaults to `6` when omitted | No |
+| `freeze_authority = None` | Assert that the mint has no freeze authority | No |
+| `freeze_authority = Some(<field>)` | Expected freeze authority | No |
+| `token_program = <field>` | Token program used for initialization or explicit owner validation | For initialization |
 
 | | |
 |---|---|
-| **Syntax** | `#[account(init, mint::authority = authority_field)]` |
-
-### `mint::freeze_authority = <field>`
-
-Sets the freeze authority for a newly initialized mint.
-
-| | |
-|---|---|
-| **Syntax** | `#[account(init, mint::freeze_authority = field)]` |
+| **Syntax** | `#[account(mint(authority = authority_field, decimals = EXPR, freeze_authority = None, token_program = token_program_field))]` |
 
 ```rust
+use quasar_spl::accounts::mint;
+
 #[derive(Accounts)]
 pub struct CreateMint {
     #[account(
         init,
         payer = payer,
-        mint::decimals = 6,
-        mint::authority = authority,
-        mint::freeze_authority = authority
+        mint(
+            decimals = 6,
+            authority = authority,
+            freeze_authority = Some(authority),
+            token_program = token_program
+        )
     )]
     pub mint: InterfaceAccount<Mint>,
     #[account(mut)]
@@ -410,43 +401,37 @@ pub struct CreateMint {
 
 ---
 
-## Associated Token Account (ATA) Constraints
+## Associated Token Account (ATA) Behavior
 
-Create and validate associated token accounts.
+`associated_token(...)` derives and validates an ATA from its mint, authority, and token program. Initialization invokes the ATA program.
 
-### `associated_token::mint = <field>`
-
-Mint for ATA address derivation and validation.
-
-| | |
-|---|---|
-| **Syntax** | `#[account(associated_token::mint = mint_field)]` |
-
-### `associated_token::authority = <field>`
-
-Authority (wallet) for ATA address derivation and validation.
+| Argument | Purpose | Required |
+|----------|---------|----------|
+| `mint = <field>` | Mint used for address derivation and token-data validation | Yes |
+| `authority = <field>` | Wallet or PDA used for address derivation and validation | Yes |
+| `token_program = <field>` | Token program used for derivation and initialization | For initialization and explicit interface validation |
+| `system_program = <field>` | System program passed to the create CPI | For initialization |
+| `ata_program = <field>` | Associated Token Program invoked by the create CPI | For initialization |
 
 | | |
 |---|---|
-| **Syntax** | `#[account(associated_token::authority = authority_field)]` |
-
-### `associated_token::token_program = <field>`
-
-Token program for ATA derivation (needed for Token-2022).
-
-| | |
-|---|---|
-| **Syntax** | `#[account(associated_token::token_program = token_program_field)]` |
+| **Syntax** | `#[account(associated_token(mint = mint_field, authority = authority_field, token_program = token_program_field))]` |
 
 ```rust
+use quasar_spl::accounts::associated_token;
+
 #[derive(Accounts)]
 pub struct InitAta {
     #[account(
         init,
         payer = payer,
-        associated_token::mint = mint,
-        associated_token::authority = owner,
-        associated_token::token_program = token_program
+        associated_token(
+            mint = mint,
+            authority = owner,
+            token_program = token_program,
+            system_program = system_program,
+            ata_program = ata_program
+        )
     )]
     pub ata: InterfaceAccount<Token>,
     pub mint: InterfaceAccount<Mint>,
@@ -454,7 +439,7 @@ pub struct InitAta {
     #[account(mut)]
     pub payer: Signer,
     pub token_program: Interface<TokenInterface>,
-    pub associated_token_program: Program<AssociatedTokenProgram>,
+    pub ata_program: Program<AssociatedTokenProgram>,
     pub system_program: Program<SystemProgram>,
 }
 ```
@@ -490,14 +475,15 @@ Sets whether the metadata can be updated after creation.
 Sets the maximum supply for a master edition. Use `0` for unlimited.
 
 ```rust
+use quasar_spl::accounts::mint;
+
 #[derive(Accounts)]
 #[instruction(name: &[u8], symbol: &[u8], uri: &[u8])]
 pub struct CreateNft {
     #[account(
         init,
         payer = payer,
-        mint::decimals = 0,
-        mint::authority = authority
+        mint(decimals = 0, authority = authority, token_program = token_program)
     )]
     pub mint: InterfaceAccount<Mint>,
     #[account(
@@ -545,14 +531,9 @@ pub struct CreateNft {
 | `close` | `#[account(close(dest = field))]` | -- |
 | `realloc` | `#[account(realloc = EXPR)]` | `InvalidRealloc` |
 | `realloc::payer` | `#[account(realloc::payer = field)]` | -- |
-| `token::mint` | `#[account(init, token::mint = field)]` | -- |
-| `token::authority` | `#[account(init, token::authority = field)]` | -- |
-| `mint::decimals` | `#[account(mint::decimals = EXPR)]` | -- |
-| `mint::authority` | `#[account(mint::authority = field)]` | -- |
-| `mint::freeze_authority` | `#[account(mint::freeze_authority = field)]` | -- |
-| `associated_token::mint` | `#[account(associated_token::mint = field)]` | -- |
-| `associated_token::authority` | `#[account(associated_token::authority = field)]` | -- |
-| `associated_token::token_program` | `#[account(associated_token::token_program = field)]` | -- |
+| `token(...)` | `#[account(token(mint = mint, authority = authority, token_program = token_program))]` | -- |
+| `mint(...)` | `#[account(mint(authority = authority, decimals = 6, token_program = token_program))]` | -- |
+| `associated_token(...)` | `#[account(associated_token(mint = mint, authority = authority, token_program = token_program))]` | -- |
 | `metadata::name` | `#[account(metadata::name = EXPR)]` | -- |
 | `metadata::symbol` | `#[account(metadata::symbol = EXPR)]` | -- |
 | `metadata::uri` | `#[account(metadata::uri = EXPR)]` | -- |
