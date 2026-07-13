@@ -30,7 +30,9 @@ With a name, uses saved defaults and skips prompts. Without a name, launches an 
 | `NAME` | Project name (becomes crate name and `Quasar.toml` project name). Use `.` to scaffold into the current directory. |
 | `-y, --yes` | Skip prompts and use saved defaults |
 | `--no-git` | Skip `git init` |
-| `--framework <FRAMEWORK>` | Testing framework: `none`, `mollusk`, `quasarsvm-rust`, `quasarsvm-web3js`, `quasarsvm-kit` |
+| `--test-language <LANGUAGE>` | Test language: `none`, `rust`, or `typescript` |
+| `--rust-framework <FRAMEWORK>` | Rust framework when the test language is `rust`: `quasar-svm` or `mollusk` |
+| `--ts-sdk <SDK>` | Solana SDK when the test language is `typescript`: `kit` or `web3.js` |
 | `--template <TEMPLATE>` | Project template: `minimal` (single instruction) or `full` (state, events, instruction files) |
 | `--toolchain <TOOLCHAIN>` | Build toolchain: `solana` or `upstream` |
 
@@ -42,7 +44,8 @@ Generates a project with `Cargo.toml`, `Quasar.toml`, source files, test scaffol
 quasar init                        # Interactive wizard
 quasar init my-program             # Use saved defaults, no prompts
 quasar init . --toolchain upstream # Scaffold into current directory
-quasar init my-app --framework mollusk --template full
+quasar init my-app --test-language rust --rust-framework mollusk --template full
+quasar init my-app --test-language typescript --ts-sdk kit --template full
 ```
 
 ---
