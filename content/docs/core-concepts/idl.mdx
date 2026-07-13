@@ -96,7 +96,11 @@ Each instruction includes its name, discriminator bytes, accounts with flags, an
   "args": [
     { "name": "deposit", "type": "u64" },
     { "name": "receive", "type": "u64" }
-  ]
+  ],
+  "layout": {
+    "kind": "fixed",
+    "fields": ["deposit", "receive"]
+  }
 }
 ```
 
@@ -104,6 +108,7 @@ Each instruction includes its name, discriminator bytes, accounts with flags, an
 - Caller-provided accounts use `resolver: { "kind": "input" }`.
 - PDA resolvers name the derivation program and encode seeds as `const` bytes or an `account` path.
 - Known program addresses use a `const` resolver with an `address`.
+- A fixed `layout` lists instruction arguments in wire order.
 
 Instructions using `CtxWithRemaining` include a structured `remainingAccounts` contract:
 
