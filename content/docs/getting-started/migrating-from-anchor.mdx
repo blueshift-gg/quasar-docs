@@ -50,8 +50,8 @@ pub struct Take {
     pub escrow: Account<Escrow>,
     #[account(mut)]
     pub maker: UncheckedAccount,
-    pub token_program: Program<Token>,
-    pub system_program: Program<System>,
+    pub token_program: Program<TokenProgram>,
+    pub system_program: Program<SystemProgram>,
 }
 ```
 

@@ -50,7 +50,7 @@ pub metadata_program: Program<MetadataProgram>,
 Use `metadata::*` attributes on a mint's `#[account(init)]` to create metadata declaratively:
 
 ```rust
-use quasar_spl::{metadata::MetadataProgram, Mint, Token};
+use quasar_spl::{metadata::MetadataProgram, Mint, Token, TokenProgram};
 
 #[derive(Accounts)]
 pub struct CreateNft {
@@ -71,8 +71,8 @@ pub struct CreateNft {
     #[account(mut)]
     pub metadata: UncheckedAccount,
     pub metadata_program: Program<MetadataProgram>,
-    pub token_program: Program<Token>,
-    pub system_program: Program<System>,
+    pub token_program: Program<TokenProgram>,
+    pub system_program: Program<SystemProgram>,
     pub rent: UncheckedAccount,
 }
 ```

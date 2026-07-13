@@ -10,7 +10,7 @@ The `quasar-spl` crate provides zero-copy wrappers and typed CPI for the SPL Tok
 Two marker types: `Token` for token accounts (165 bytes) and `Mint` for mint accounts (82 bytes). Use them with `Account<T>`:
 
 ```rust
-use quasar_spl::{Mint, Token, TokenCpi};
+use quasar_spl::{Mint, Token, TokenCpi, TokenProgram};
 
 #[derive(Accounts)]
 pub struct TransferTokens {
@@ -19,7 +19,7 @@ pub struct TransferTokens {
     pub from: Account<Token>,
     #[account(mut)]
     pub to: Account<Token>,
-    pub token_program: Program<Token>,
+    pub token_program: Program<TokenProgram>,
 }
 ```
 
@@ -42,7 +42,7 @@ mint.freeze_authority()        // Option<&Address>
 
 ## CPI
 
-`Program<Token>` implements the `TokenCpi` trait, giving you method-style calls that return `CpiCall` values:
+`Program<TokenProgram>` implements the `TokenCpi` trait, giving you method-style calls that return `CpiCall` values:
 
 ```rust
 // Transfer

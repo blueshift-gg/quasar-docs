@@ -181,7 +181,7 @@ Creates the escrow account, emits an event, and deposits tokens. `instructions/m
 use {
     crate::{events::MakeEvent, state::Escrow},
     quasar_lang::prelude::*,
-    quasar_spl::{Mint, Token, TokenCpi},
+    quasar_spl::{Mint, Token, TokenCpi, TokenProgram},
 };
 
 #[derive(Accounts)]
@@ -199,8 +199,8 @@ pub struct Make {
     #[account(init_if_needed, payer = maker, token::mint = mint_a, token::authority = escrow)]
     pub vault_ta_a: Account<Token>,
     pub rent: Sysvar<Rent>,
-    pub token_program: Program<Token>,
-    pub system_program: Program<System>,
+    pub token_program: Program<TokenProgram>,
+    pub system_program: Program<SystemProgram>,
 }
 ```
 
@@ -272,7 +272,7 @@ Handles the token swap and cleanup. `instructions/take.rs`:
 use {
     crate::{events::TakeEvent, state::Escrow},
     quasar_lang::prelude::*,
-    quasar_spl::{Mint, Token, TokenClose, TokenCpi},
+    quasar_spl::{Mint, Token, TokenClose, TokenCpi, TokenProgram},
 };
 
 #[derive(Accounts)]
@@ -302,8 +302,8 @@ pub struct Take {
     #[account(mut)]
     pub vault_ta_a: Account<Token>,
     pub rent: Sysvar<Rent>,
-    pub token_program: Program<Token>,
-    pub system_program: Program<System>,
+    pub token_program: Program<TokenProgram>,
+    pub system_program: Program<SystemProgram>,
 }
 ```
 
@@ -357,7 +357,7 @@ The maker can cancel and reclaim tokens. `instructions/refund.rs`:
 use {
     crate::{events::RefundEvent, state::Escrow},
     quasar_lang::prelude::*,
-    quasar_spl::{Mint, Token, TokenClose, TokenCpi},
+    quasar_spl::{Mint, Token, TokenClose, TokenCpi, TokenProgram},
 };
 
 #[derive(Accounts)]
@@ -378,8 +378,8 @@ pub struct Refund {
     #[account(mut)]
     pub vault_ta_a: Account<Token>,
     pub rent: Sysvar<Rent>,
-    pub token_program: Program<Token>,
-    pub system_program: Program<System>,
+    pub token_program: Program<TokenProgram>,
+    pub system_program: Program<SystemProgram>,
 }
 
 impl Refund {
