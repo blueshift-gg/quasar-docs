@@ -205,11 +205,11 @@ pub struct Note<'a> {
 
 Field-level `#[account(...)]` attributes on a `#[derive(Accounts)]` struct generate validation code that runs during account parsing. Constraints can be combined freely on a single field.
 
-### `init` / `init_if_needed`
+### `init` / `init(idempotent)`
 
-`init` creates the account via a CPI to the System program -- it allocates space, pays rent, writes the discriminator, and assigns ownership to your program in one step. `init_if_needed` does the same but skips creation if the account already exists (discriminator is already set).
+`init` creates the account via a CPI to the System program -- it allocates space, pays rent, writes the discriminator, and assigns ownership to your program in one step. `init(idempotent)` skips creation when the account is already initialized, then validates the existing account.
 
-Both need a payer. If your struct has a field named `payer`, it's auto-detected. Otherwise specify it explicitly with `payer = <field>`. Space is auto-computed from the account type; override with `space = <expr>` for dynamic accounts or custom sizing:
+Both need a payer. If your struct has a field named `payer`, it's auto-detected. Otherwise specify it explicitly with `payer = <field>`. Idempotent initialization also requires either an `address` constraint or an account behavior group, such as the token constraints below, that can validate an existing account. Space is auto-computed from the account type; override with `space = <expr>` for dynamic accounts or custom sizing:
 
 ```rust
 // payer auto-detected from the `payer` field
@@ -224,8 +224,8 @@ pub escrow: Account<Escrow>,
 #[account(mut)]
 pub maker: Signer,
 
-// init_if_needed for token accounts
-#[account(init_if_needed, payer = taker, token::mint = mint_a, token::authority = taker)]
+// Idempotent initialization for token accounts
+#[account(init(idempotent), payer = taker, token::mint = mint_a, token::authority = taker)]
 pub taker_ta_a: Account<Token>,
 ```
 

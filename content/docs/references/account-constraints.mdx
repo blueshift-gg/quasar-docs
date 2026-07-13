@@ -183,18 +183,18 @@ pub struct Vault {
 pub vault: Account<Vault>,
 ```
 
-### `init_if_needed`
+### `init(idempotent)`
 
-Like `init`, but skips creation if the account already exists. Creates and initializes only if the account is uninitialized (all zeros).
+`init(idempotent)` creates and initializes an uninitialized account. It skips creation when the account is already initialized, then validates the existing account. Add either an `address` constraint or an account behavior group that can perform that validation.
 
 | | |
 |---|---|
-| **Syntax** | `#[account(init_if_needed, payer = field_name)]` |
-| **Requires** | `payer` field, `system_program` field |
+| **Syntax** | `#[account(init(idempotent), payer = field_name)]` |
+| **Requires** | `payer` field, `system_program` field, plus `address` or a validating behavior group |
 
 ```rust
 // Profile declares #[seeds(b"profile", user: Address)].
-#[account(init_if_needed, payer = payer, address = Profile::seeds(user.address()))]
+#[account(init(idempotent), payer = payer, address = Profile::seeds(user.address()))]
 pub profile: Account<Profile>,
 ```
 
@@ -325,7 +325,7 @@ Account that pays for (or receives excess from) reallocation.
 
 ## SPL Token Constraints
 
-Used with `init` or `init_if_needed` to initialize a token account. `token::mint` and `token::authority` must be specified together.
+Used with `init` or `init(idempotent)` to initialize a token account. `token::mint` and `token::authority` must be specified together.
 
 ### `token::mint = <field>`
 
@@ -334,7 +334,7 @@ Sets the mint for a newly initialized token account.
 | | |
 |---|---|
 | **Syntax** | `#[account(init, payer = p, token::mint = mint_field, token::authority = auth_field)]` |
-| **Requires** | `init` or `init_if_needed`, paired with `token::authority` |
+| **Requires** | `init` or `init(idempotent)`, paired with `token::authority` |
 
 ### `token::authority = <field>`
 
@@ -343,7 +343,7 @@ Sets the authority for a newly initialized token account.
 | | |
 |---|---|
 | **Syntax** | `#[account(init, payer = p, token::mint = mint_field, token::authority = auth_field)]` |
-| **Requires** | `init` or `init_if_needed`, paired with `token::mint` |
+| **Requires** | `init` or `init(idempotent)`, paired with `token::mint` |
 
 ```rust
 #[derive(Accounts)]
@@ -538,7 +538,7 @@ pub struct CreateNft {
 | `has_one` | `#[account(has_one(field, ...))]` | `HasOneMismatch` |
 | `constraints` | `#[account(constraints(EXPR, ...))]` | `ConstraintViolation` |
 | `init` | `#[account(init, payer = p)]` | `AccountAlreadyInitialized` |
-| `init_if_needed` | `#[account(init_if_needed, payer = p)]` | -- |
+| `init(idempotent)` | `#[account(init(idempotent), payer = p)]` | -- |
 | `payer` | `#[account(payer = field)]` | -- |
 | `space` | `#[account(space = EXPR)]` | -- |
 | typed PDA | `#[seeds(...)]` plus `#[account(address = Type::seeds(...))]` | `InvalidPda` |

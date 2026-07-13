@@ -8,7 +8,7 @@ Build a token escrow where a maker deposits tokens of one mint and specifies how
 You will learn to:
 
 - Define on-chain state with `#[account]`
-- Initialize accounts with `init` and `init_if_needed`
+- Initialize accounts with `init` and `init(idempotent)`
 - Perform SPL token CPI (transfers and closures)
 - Sign CPIs on behalf of a PDA with `invoke_signed`
 - Close accounts and reclaim rent
@@ -195,9 +195,9 @@ pub struct Make {
     pub mint_b: Account<Mint>,
     #[account(mut)]
     pub maker_ta_a: Account<Token>,
-    #[account(init_if_needed, payer = maker, token::mint = mint_b, token::authority = maker)]
+    #[account(init(idempotent), payer = maker, token::mint = mint_b, token::authority = maker)]
     pub maker_ta_b: Account<Token>,
-    #[account(init_if_needed, payer = maker, token::mint = mint_a, token::authority = escrow)]
+    #[account(init(idempotent), payer = maker, token::mint = mint_a, token::authority = escrow)]
     pub vault_ta_a: Account<Token>,
     pub rent: Sysvar<Rent>,
     pub token_program: Program<TokenProgram>,
@@ -211,7 +211,7 @@ pub struct Make {
 - **`escrow`** -- Created via `init` and verified against `Escrow::seeds(maker.address())`. Each maker gets one active escrow.
 - **`mint_a` / `mint_b`** -- The two token mints. `Account<Mint>` validates these are SPL mint accounts.
 - **`maker_ta_a`** -- Maker's existing token account for mint A (the deposited tokens).
-- **`maker_ta_b`** -- Maker's token account for mint B. `init_if_needed` creates it if it doesn't exist; validates it if it does.
+- **`maker_ta_b`** -- Maker's token account for mint B. `init(idempotent)` creates it if it doesn't exist and validates it if it does.
 - **`vault_ta_a`** -- Vault token account holding escrowed tokens. `token::authority = escrow` means only the escrow PDA can move tokens out via signed CPI.
 - **`rent`, `token_program`, `system_program`** -- Required for account creation and token operations.
 
@@ -292,11 +292,11 @@ pub struct Take {
     pub maker: UncheckedAccount,
     pub mint_a: Account<Mint>,
     pub mint_b: Account<Mint>,
-    #[account(init_if_needed, payer = taker, token::mint = mint_a, token::authority = taker)]
+    #[account(init(idempotent), payer = taker, token::mint = mint_a, token::authority = taker)]
     pub taker_ta_a: Account<Token>,
     #[account(mut)]
     pub taker_ta_b: Account<Token>,
-    #[account(init_if_needed, payer = taker, token::mint = mint_b, token::authority = maker)]
+    #[account(init(idempotent), payer = taker, token::mint = mint_b, token::authority = maker)]
     pub maker_ta_b: Account<Token>,
     #[account(mut)]
     pub vault_ta_a: Account<Token>,
@@ -372,7 +372,7 @@ pub struct Refund {
     )]
     pub escrow: Account<Escrow>,
     pub mint_a: Account<Mint>,
-    #[account(init_if_needed, payer = maker, token::mint = mint_a, token::authority = maker)]
+    #[account(init(idempotent), payer = maker, token::mint = mint_a, token::authority = maker)]
     pub maker_ta_a: Account<Token>,
     #[account(mut)]
     pub vault_ta_a: Account<Token>,
@@ -424,7 +424,7 @@ solana-address = { version = "2.2.0", features = ["decode"] }
 solana-instruction = { version = "3.2.0", features = ["bincode"] }
 ```
 
-The test suite covers happy paths and edge cases: pre-existing token accounts (`init_if_needed` validation), wrong mints, and wrong authorities.
+The test suite covers happy paths and edge cases: pre-existing token accounts (`init(idempotent)` validation), wrong mints, and wrong authorities.
 
 Run tests:
 
@@ -434,7 +434,7 @@ cargo test-sbf
 
 ## Summary
 
-- **Account initialization** -- `init` creates accounts; `init_if_needed` handles "create or validate" for token accounts.
+- **Account initialization** -- `init` creates accounts; `init(idempotent)` handles "create or validate" for token accounts.
 - **SPL token CPI** -- Type-safe transfers and closures via `quasar-spl`.
 - **PDA signing** -- `invoke_signed` with context bumps authorizes CPIs on behalf of a PDA.
 - **Account closure** -- `close` reclaims rent automatically.
