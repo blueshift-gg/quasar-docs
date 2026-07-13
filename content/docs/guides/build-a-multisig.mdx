@@ -112,8 +112,8 @@ mod quasar_multisig {
 
     #[instruction(discriminator = 0)]
     pub fn create(ctx: CtxWithRemaining<Create>, threshold: u8) -> Result<(), ProgramError> {
-        ctx.accounts
-            .create_multisig(threshold, &ctx.bumps, ctx.remaining_accounts())
+        let signers = ctx.remaining_accounts().parse::<Signer, 10>()?;
+        ctx.accounts.create_multisig(threshold, &ctx.bumps, signers)
     }
 
     #[instruction(discriminator = 1)]
@@ -131,13 +131,14 @@ mod quasar_multisig {
         ctx: CtxWithRemaining<ExecuteTransfer>,
         amount: u64,
     ) -> Result<(), ProgramError> {
+        let signers = ctx.remaining_accounts().parse::<Signer, 10>()?;
         ctx.accounts
-            .verify_and_transfer(amount, &ctx.bumps, ctx.remaining_accounts())
+            .verify_and_transfer(amount, &ctx.bumps, signers)
     }
 }
 ```
 
-`create` and `execute_transfer` use `CtxWithRemaining<T>` instead of `Ctx<T>` because the number of signers varies per transaction. `ctx.remaining_accounts()` returns an iterator over accounts beyond those in the struct. See [Remaining Accounts](/docs/features/remaining-accounts).
+`create` and `execute_transfer` use `CtxWithRemaining<T>` because the number of signers varies per transaction. Each instruction parses the trailing entries into `Remaining<Signer, 10>` before calling business logic, which enforces the signer type and ten-item bound once. See [Remaining Accounts](/docs/features/remaining-accounts).
 
 `set_label` takes a `String<32>`, decoded from compact instruction data as a one-byte length prefix plus UTF-8 bytes.
 
@@ -164,7 +165,7 @@ pub use execute_transfer::*;
 ```rust
 use {
     crate::state::{MultisigConfig, MultisigConfigInner},
-    quasar_lang::{prelude::*, remaining::RemainingAccounts},
+    quasar_lang::prelude::*,
 };
 
 #[derive(Accounts)]
@@ -191,29 +192,24 @@ impl Create {
         &mut self,
         threshold: u8,
         bumps: &CreateBumps,
-        remaining: RemainingAccounts,
+        signers: Remaining<Signer, 10>,
     ) -> Result<(), ProgramError> {
         let mut addrs = core::mem::MaybeUninit::<[Address; 10]>::uninit();
         let addrs_ptr = addrs.as_mut_ptr() as *mut Address;
         let mut count = 0usize;
 
-        for account in remaining.iter() {
-            let account = account?;
-            if count >= 10 {
-                return Err(ProgramError::InvalidArgument);
-            }
-            if !account.is_signer() {
-                return Err(ProgramError::MissingRequiredSignature);
-            }
-            unsafe { core::ptr::write(addrs_ptr.add(count), *account.address()) };
+        for signer in signers.iter() {
+            // SAFETY: typed parsing guarantees count is below the capacity 10.
+            unsafe { core::ptr::write(addrs_ptr.add(count), *signer.address()) };
             count = count.wrapping_add(1);
         }
 
-        if threshold == 0 || threshold as usize > count {
+        let threshold_count = threshold as usize;
+        if threshold_count == 0 || threshold_count > count {
             return Err(ProgramError::InvalidArgument);
         }
 
-        let signers = unsafe { core::slice::from_raw_parts(addrs_ptr, count) };
+        let signer_addresses = unsafe { core::slice::from_raw_parts(addrs_ptr, count) };
 
         self.config.set_inner(
             MultisigConfigInner {
@@ -221,7 +217,7 @@ impl Create {
                 threshold,
                 bump: bumps.config,
                 label: "",
-                signers,
+                signers: signer_addresses,
             },
             self.creator.to_account_view(),
             self.rent.lamports_per_byte(),
@@ -231,7 +227,7 @@ impl Create {
 }
 ```
 
-The handler iterates `remaining.iter()`, which yields accounts beyond those in the struct. For each: check the 10-signer cap, verify `is_signer()` (prevents registering arbitrary addresses), and store the address in a stack-allocated array.
+`parse::<Signer, 10>()` already checked the signer flag and item bound. The handler copies those validated addresses into a stack-allocated array for the compact account field.
 
 The `MaybeUninit` array avoids heap allocation -- safe because `count` tracks initialization.
 
@@ -284,7 +280,7 @@ Verify enough signers have approved, then transfer SOL from the vault. `instruct
 use {
     super::deposit::MultisigVaultPda,
     crate::state::MultisigConfig,
-    quasar_lang::{prelude::*, remaining::RemainingAccounts},
+    quasar_lang::prelude::*,
 };
 
 #[derive(Accounts)]
@@ -312,39 +308,38 @@ impl ExecuteTransfer {
         &self,
         amount: u64,
         bumps: &ExecuteTransferBumps,
-        remaining: RemainingAccounts,
+        signers: Remaining<Signer, 10>,
     ) -> Result<(), ProgramError> {
         let stored_signers = self.config.signers();
-        let threshold = self.config.threshold;
+        let threshold = self.config.threshold as u32;
 
         let mut approvals = 0u32;
-        for account in remaining.iter() {
-            let account = account?;
-            if !account.is_signer() {
-                continue;
-            }
-            let addr = account.address();
-            for stored in stored_signers {
-                if addr == stored {
+        for stored in stored_signers {
+            for signer in signers.iter() {
+                if quasar_lang::keys_eq(signer.address(), stored) {
                     approvals = approvals.wrapping_add(1);
                     break;
                 }
             }
+            if approvals >= threshold {
+                break;
+            }
         }
 
-        if approvals < threshold as u32 {
+        if approvals < threshold {
             return Err(ProgramError::MissingRequiredSignature);
         }
 
         let vault_signer = self.vault_signer(bumps);
         self.system_program
             .transfer(&self.vault, &self.recipient, amount)
-            .invoke_signed(&vault_signer)
+            .invoke_signed(&vault_signer)?;
+        Ok(())
     }
 }
 ```
 
-Load the stored signer list, count how many remaining accounts are both transaction signers and in the list, check against the threshold, and if met, execute the transfer with `invoke_signed`.
+Load the stored signer list, count how many validated transaction signers match it, check the threshold, and execute the transfer with `invoke_signed`. Iterating the stored list first prevents a repeated signer meta from counting more than once for the same configured signer.
 
 ## The set_label instruction
 
@@ -403,7 +398,7 @@ cargo test-sbf
 ## Summary
 
 - **Dynamic fields** -- `String` and `Vec` stored directly in account data with zero-copy access.
-- **Remaining accounts** -- `CtxWithRemaining<T>` accepts variable-length account lists.
+- **Remaining accounts** -- `CtxWithRemaining<T>` captures the tail and `Remaining<T, N>` validates a bounded typed list.
 - **Threshold authorization** -- Counts signer approvals against a stored threshold.
 - **Dynamic field mutation** -- An `as_mut` guard updates bounded fields and resizes the compact account.
 - **PDA-signed transfers** -- Vault transfers require `invoke_signed` with signer seeds.

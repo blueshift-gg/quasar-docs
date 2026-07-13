@@ -1,82 +1,96 @@
 ---
 title: Remaining Accounts
-description: Accessing dynamically-sized remaining accounts in instructions.
+description: Parsing bounded, typed account lists after an instruction's declared accounts.
 ---
 
-Some instructions need a variable number of accounts -- a list of signers for a multisig, a set of token accounts for a batch transfer, or extra accounts forwarded to a CPI. **Remaining accounts** are accounts passed after the declared (typed) accounts in the instruction.
+Some instructions need a variable number of accounts, such as a multisig signer set or a list of accounts forwarded to another program. Remaining accounts are the entries passed after the declared fields in a `#[derive(Accounts)]` struct.
 
 ## `Ctx` vs `CtxWithRemaining`
 
-- **`Ctx<T>`** -- parsed and validated accounts only. For instructions with a fixed set of accounts.
-- **`CtxWithRemaining<T>`** -- also captures remaining accounts. For instructions that need additional accounts.
+- `Ctx<T>` parses only the instruction's declared accounts.
+- `CtxWithRemaining<T>` also preserves the trailing account region.
 
-Choose at the instruction signature:
+Choose the context in the instruction signature, then parse the trailing entries into a bounded type before calling business logic:
 
 ```rust
-// Fixed accounts only
 #[instruction(discriminator = 0)]
-pub fn initialize(ctx: Ctx<Initialize>) -> Result<(), ProgramError> {
-    ctx.accounts.handler(&ctx.bumps)
-}
-
-// With remaining accounts
-#[instruction(discriminator = 1)]
-pub fn create_multisig(
-    ctx: CtxWithRemaining<Create>,
-    threshold: u8,
-) -> Result<(), ProgramError> {
-    ctx.accounts.create_multisig(threshold, &ctx.bumps, ctx.remaining_accounts())
+pub fn create(ctx: CtxWithRemaining<Create>, threshold: u8) -> Result<(), ProgramError> {
+    let signers = ctx.remaining_accounts().parse::<Signer, 10>()?;
+    ctx.accounts.create_multisig(threshold, &ctx.bumps, signers)
 }
 ```
 
-The `#[program]` macro detects which context type you use and generates the appropriate dispatch code.
+The `#[program]` macro detects `CtxWithRemaining<T>` and keeps the trailing account bytes available through `ctx.remaining_accounts()`.
 
-## The `RemainingAccounts` struct
+## Typed parsing with `Remaining<T, N>`
 
-`RemainingAccounts` is a zero-allocation accessor over the SVM input buffer. It provides bounds-checked access and automatic duplicate resolution against the declared accounts.
+`parse::<T, N>()` validates every remaining item and returns `Remaining<T, N>`, a zero-allocation collection stored in a fixed-capacity stack array. `N` is the maximum number of typed items, not a runtime allocation size.
 
-### Checking for remaining accounts
+```rust
+let signers: Remaining<Signer, 10> =
+    ctx.remaining_accounts().parse::<Signer, 10>()?;
+
+if signers.is_empty() {
+    return Err(ProgramError::NotEnoughAccountKeys);
+}
+
+for signer in signers.iter() {
+    let address: &Address = signer.address();
+    // use address...
+}
+```
+
+The item type applies its normal account validation during parsing. `Signer` checks the transaction signer flag; `Account<T>` checks owner and account data; `Program<T>`, `InterfaceAccount<T>`, sysvars, and custom `#[derive(Accounts)]` groups use their corresponding validators.
+
+Parsing fails before business logic receives the value when an entry does not satisfy `T`, when a fixed-count group is incomplete, when the input contains more than `N` typed items, or when parsing would consume more than 64 raw accounts. A custom accounts group can consume multiple raw accounts per typed item, but still occupies one slot in `Remaining<T, N>`.
+
+| Method | Result |
+|--------|--------|
+| `as_slice()` | All parsed items as `&[T]` |
+| `iter()` | Iterator over `&T` |
+| `len()` | Number of parsed typed items |
+| `capacity()` | Compile-time capacity `N` |
+| `is_empty()` | Whether no items were parsed |
+
+## Raw access
+
+Use the raw `RemainingAccounts` accessor only when the tail is heterogeneous or requires manual validation. It provides:
 
 ```rust
 let remaining = ctx.remaining_accounts();
-if remaining.is_empty() {
-    return Err(ProgramError::NotEnoughAccountKeys);
+
+if let Some(account) = remaining.get(0)? {
+    require!(account.is_writable(), ProgramError::InvalidAccountData);
 }
-```
 
-### Random access
-
-`get(index)` walks from the buffer start to the requested index (O(n) per call):
-
-```rust
-let first = remaining.get(0);  // Option<AccountView>
-let third = remaining.get(2);  // walks past 0, 1, returns 2
-```
-
-### Iteration
-
-`iter()` returns a `RemainingIter` that yields accounts lazily:
-
-```rust
 for account in remaining.iter() {
-    let account = account?;  // Result<AccountView, ProgramError>
-    // use account...
+    let account = account?;
+    // Apply the exact checks required by this heterogeneous entry.
 }
 ```
 
-The iterator caches accounts as it walks, enabling O(1) duplicate resolution. Prefer it over `get()`.
+`get(index)` walks from the beginning of the remaining region. The iterator advances once, caches previously yielded views for duplicate resolution, and returns `RemainingAccountsOverflow` after 64 raw entries.
 
-## Real example: multisig creation
+## Multisig creation
 
-The multisig state declares `#[seeds(b"multisig", creator: Address)]` on
-`MultisigConfig`.
+The instruction boundary parses at most ten signers:
+
+```rust
+#[instruction(discriminator = 0)]
+pub fn create(ctx: CtxWithRemaining<Create>, threshold: u8) -> Result<(), ProgramError> {
+    let signers = ctx.remaining_accounts().parse::<Signer, 10>()?;
+    ctx.accounts.create_multisig(threshold, &ctx.bumps, signers)
+}
+```
+
+The accounts handler receives only validated `Signer` values:
 
 ```rust
 #[derive(Accounts)]
 pub struct Create {
     #[account(mut)]
     pub creator: Signer,
-    #[account(init, mut, payer = creator, address = MultisigConfig::seeds(creator.address()))]
+    #[account(init, payer = creator, address = MultisigConfig::seeds(creator.address()))]
     pub config: Account<MultisigConfig>,
     pub rent: Sysvar<Rent>,
     pub system_program: Program<SystemProgram>,
@@ -87,29 +101,25 @@ impl Create {
         &mut self,
         threshold: u8,
         bumps: &CreateBumps,
-        remaining: RemainingAccounts,
+        signers: Remaining<Signer, 10>,
     ) -> Result<(), ProgramError> {
         let mut addrs = core::mem::MaybeUninit::<[Address; 10]>::uninit();
         let addrs_ptr = addrs.as_mut_ptr() as *mut Address;
         let mut count = 0usize;
 
-        for account in remaining.iter() {
-            let account = account?;
-            if count >= 10 {
-                return Err(ProgramError::InvalidArgument);
-            }
-            if !account.is_signer() {
-                return Err(ProgramError::MissingRequiredSignature);
-            }
-            unsafe { core::ptr::write(addrs_ptr.add(count), *account.address()) };
+        for signer in signers.iter() {
+            // SAFETY: typed parsing guarantees count is below the capacity 10.
+            unsafe { core::ptr::write(addrs_ptr.add(count), *signer.address()) };
             count = count.wrapping_add(1);
         }
 
-        if threshold == 0 || threshold as usize > count {
+        let threshold_count = threshold as usize;
+        if threshold_count == 0 || threshold_count > count {
             return Err(ProgramError::InvalidArgument);
         }
 
-        let signers = unsafe { core::slice::from_raw_parts(addrs_ptr, count) };
+        // SAFETY: Elements 0..count were initialized by the loop above.
+        let signer_addresses = unsafe { core::slice::from_raw_parts(addrs_ptr, count) };
 
         self.config.set_inner(
             MultisigConfigInner {
@@ -117,7 +127,7 @@ impl Create {
                 threshold,
                 bump: bumps.config,
                 label: "",
-                signers,
+                signers: signer_addresses,
             },
             self.creator.to_account_view(),
             self.rent.lamports_per_byte(),
@@ -127,96 +137,73 @@ impl Create {
 }
 ```
 
-Remaining accounts are unchecked by default -- the handler explicitly verifies `is_signer()` and bounds the count.
+The parser owns the signer check and ten-item bound. The handler only copies validated addresses into the compact account field and enforces the multisig threshold rule.
 
-## Real example: multisig execution
+## Multisig execution
+
+The execute path uses the same typed boundary:
 
 ```rust
-#[derive(Seeds)]
-#[seeds(b"vault", config: Address)]
-pub struct MultisigVaultPda;
-
-#[derive(Accounts)]
-pub struct ExecuteTransfer {
-    #[account(
-        has_one(creator),
-        address = MultisigConfig::seeds(creator.address())
-    )]
-    pub config: Account<MultisigConfig>,
-    pub creator: UncheckedAccount,
-    #[account(mut, address = MultisigVaultPda::seeds(config.address()))]
-    pub vault: UncheckedAccount,
-    #[account(mut)]
-    pub recipient: UncheckedAccount,
-    pub system_program: Program<SystemProgram>,
+#[instruction(discriminator = 3)]
+pub fn execute_transfer(
+    ctx: CtxWithRemaining<ExecuteTransfer>,
+    amount: u64,
+) -> Result<(), ProgramError> {
+    let signers = ctx.remaining_accounts().parse::<Signer, 10>()?;
+    ctx.accounts
+        .verify_and_transfer(amount, &ctx.bumps, signers)
 }
+```
 
+```rust
 impl ExecuteTransfer {
     pub fn verify_and_transfer(
         &self,
         amount: u64,
         bumps: &ExecuteTransferBumps,
-        remaining: RemainingAccounts,
+        signers: Remaining<Signer, 10>,
     ) -> Result<(), ProgramError> {
         let stored_signers = self.config.signers();
-        let threshold = self.config.threshold;
+        let threshold = self.config.threshold as u32;
 
         let mut approvals = 0u32;
-        for account in remaining.iter() {
-            let account = account?;
-            if !account.is_signer() {
-                continue;
-            }
-            let addr = account.address();
-            for stored in stored_signers {
-                if addr == stored {
+        for stored in stored_signers {
+            for signer in signers.iter() {
+                if quasar_lang::keys_eq(signer.address(), stored) {
                     approvals = approvals.wrapping_add(1);
                     break;
                 }
             }
+            if approvals >= threshold {
+                break;
+            }
         }
 
-        if approvals < threshold as u32 {
+        if approvals < threshold {
             return Err(ProgramError::MissingRequiredSignature);
         }
 
         let vault_signer = self.vault_signer(bumps);
         self.system_program
             .transfer(&self.vault, &self.recipient, amount)
-            .invoke_signed(&vault_signer)
+            .invoke_signed(&vault_signer)?;
+        Ok(())
     }
 }
 ```
 
-Non-signer accounts are silently skipped (with `continue`), allowing clients to pass additional accounts without breaking the instruction.
+`Signer` permits repeated account metas during typed parsing. Iterating stored signers first and breaking after the first match ensures a repeated transaction meta cannot count as multiple approvals for one configured signer.
 
-## Duplicate account handling
+## Duplicate handling and cost
 
-The SVM uses a compact encoding for duplicate accounts -- a duplicate entry references the original by index instead of repeating the full data. The iterator handles this transparently: duplicates resolve to the same `AccountView` as the original, whether it was a declared account or a previously yielded remaining account.
-
-The iterator cache is bounded at 64 entries. Exceeding this returns `Err(QuasarError::RemainingAccountsOverflow)`.
-
-## Performance characteristics
+Raw iteration resolves duplicate SVM entries against declared accounts and previously yielded remaining accounts. Typed parsing applies the duplicate policy of `T`; remaining item types reject duplicate addresses by default, while `Signer` allows them for workflows that handle repetition explicitly.
 
 | Operation | Cost |
 |-----------|------|
-| `ctx.remaining_accounts()` | O(1) -- returns pre-computed pointers |
-| `remaining.is_empty()` | O(1) -- pointer comparison |
-| `remaining.get(n)` | O(n) -- walks buffer from start |
-| `remaining.iter().next()` | O(1) amortized -- advances one entry |
-| Duplicate resolution (iterator) | O(1) -- cache lookup |
-| Duplicate resolution (get) | O(n) -- re-walks buffer with 2-hop limit |
+| `ctx.remaining_accounts()` | O(1) pointer construction |
+| `parse::<T, N>()` | O(n) parsing, plus O(n²) duplicate checks when `T` rejects duplicates |
+| `Remaining<T, N>::iter()` | O(1) per typed item |
+| Raw `remaining.get(n)` | O(n) walk from the start |
+| Raw `remaining.iter().next()` | O(1) amortized |
 
-Prefer `iter()` over repeated `get()` calls when processing all remaining accounts.
-
-## Guidelines
-
-1. **Use `CtxWithRemaining<T>` only when needed.** If your instruction does not access remaining accounts, use `Ctx<T>`.
-
-2. **Prefer `iter()` over `get()`.** The iterator caches for O(1) duplicate resolution. Repeated `get()` calls re-walk the buffer each time.
-
-3. **Validate remaining accounts explicitly.** They are unchecked by design. Check `is_signer()`, `is_writable()`, owner, and any other constraints in your handler.
-
-4. **Stay under 64 remaining accounts.** The iterator cache is bounded at 64 entries.
-
-5. **Use stack-allocated collection buffers.** The multisig example demonstrates the pattern: a `MaybeUninit` array on the stack, filled by the iterator, with a bounded count.
+Prefer typed parsing for homogeneous account lists. It centralizes validation, makes the maximum item count explicit in the type, and gives handlers infallible iteration over validated values. Keep raw access for genuinely heterogeneous tails and document every manual check.
