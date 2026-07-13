@@ -7,7 +7,14 @@ import logoFull from '@/app/images/logo-full.webp';
 
 const baseOptions: BaseLayoutProps = {
   nav: {
-    title: <Image src={logoFull} alt="Quasar" width={300} height={200} className='w-32 mb-2' />,
+    title: (
+      <span className="mb-2 flex items-center gap-2">
+        <Image src={logoFull} alt="Quasar" width={300} height={200} className="w-32" />
+        <span className="rounded border border-fd-border bg-fd-muted px-1.5 py-0.5 text-xs font-medium text-fd-muted-foreground">
+          v0.1.0
+        </span>
+      </span>
+    ),
     url: "/docs"
   },
   githubUrl: 'https://github.com/blueshift-gg/quasar',
