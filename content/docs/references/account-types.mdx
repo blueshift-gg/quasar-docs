@@ -68,20 +68,22 @@ pub struct Deposit {
 
 **Fixed-size** accounts (all fixed-width fields) are constructed via pointer cast with no deserialization cost.
 
-**Dynamic** accounts (containing `String` or `Vec` fields) walk the length prefixes once to cache byte offsets, then provide O(1) field access:
+**Dynamic** accounts contain bounded `String` or `Vec` fields. Quasar validates their compact header and payload ranges when the account is loaded, then exposes borrowed read accessors:
 
 ```rust
-#[account(discriminator = 5)]
-pub struct Profile<'a> {
+#[account(discriminator = 5, set_inner)]
+pub struct Profile {
     pub owner: Address,
-    pub name: String,           // dynamic field
-    pub bio: String<u16, 4096>, // custom prefix + max
+    pub name: String<64>,          // u8 prefix, max 64 bytes
+    pub bio: String<4096, u16>,    // u16 prefix, max 4096 bytes
 }
 
 #[derive(Accounts)]
-pub struct UpdateProfile<'info> {
+pub struct UpdateProfile {
     #[account(mut)]
-    pub profile: Account<Profile<'info>>,
+    pub owner: Signer,
+    #[account(mut)]
+    pub profile: Account<Profile>,
 }
 ```
 
@@ -90,8 +92,9 @@ Dynamic accounts have additional methods:
 | Method | Description |
 |--------|-------------|
 | `field_name()` | Read accessor returning `&str` or `&[T]` |
-| `field_name_raw()` | Raw bytes including length prefix (for CPI passthrough) |
-| `set_field_name(payer, value)` | Write accessor with auto-realloc |
+| `as_mut(payer)` | Load a mutation guard whose dynamic fields are bounded `PodString` or `PodVec` values |
+| `guard.save()` | Write guard values, adjust rent through the payer, and resize to the exact compact length |
+| `set_inner(inner, payer, rent_lpb, rent_threshold)` | Initialize all fields when the account type opts into `set_inner` |
 
 ---
 

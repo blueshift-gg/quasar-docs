@@ -3,105 +3,103 @@ title: Dynamic Fields
 description: Variable-length strings and vectors stored inline in account data, zero-copy.
 ---
 
-Fixed-size accounts cover most use cases, but sometimes you need variable-length data -- a label, a list of signers, a chunk of arbitrary bytes. Quasar provides `String<'a, MAX>` and `Vec<'a, T, MAX>` as zero-copy dynamic fields that live inline in account data with a length prefix. No heap allocation, no deserialization.
+Quasar stores variable-length account data with bounded `String<MAX>` and `Vec<T, MAX>` fields. The account holds only the current payload plus a length prefix for each field, so reads do not allocate or deserialize into heap collections.
 
 ## String and Vec
 
 ```rust
-#[account(discriminator = 1)]
-pub struct MultisigConfig<'a> {
+#[account(discriminator = 1, set_inner)]
+pub struct MultisigConfig {
     pub creator: Address,
     pub threshold: u8,
     pub bump: u8,
-    pub label: String<'a, 32>,         // max 32 bytes
-    pub signers: Vec<'a, Address, 10>, // max 10 elements
+    pub label: String<32>,         // max 32 bytes
+    pub signers: Vec<Address, 10>, // max 10 elements
 }
 ```
 
-Structs with dynamic fields need a lifetime parameter -- the generated accessors return borrowed references (`&str`, `&[Address]`) pointing directly into the account data buffer.
+Dynamic account structs do not carry a lifetime. The generated account wrapper borrows the account buffer and exposes `&str` and `&[Address]` views through accessor methods.
 
-Each dynamic field is stored with a length prefix (default `u32`, Borsh-compatible) followed by the data:
+The compact layout places fixed fields and every length prefix in the header, followed by the dynamic payloads:
 
-```
+```text
 Offset     Field
 ------     -----
 0          discriminator (0x01)
 1          creator: Address (32 bytes)
 33         threshold: u8
 34         bump: u8
-35         label length prefix (u32 LE)
-39         label UTF-8 data (0..32 bytes)
-39+L       signers count prefix (u32 LE)
-43+L       signers data (0..320 bytes)
+35         label byte length (u8 LE)
+36         signers element count (u16 LE)
+38         label UTF-8 data (0..32 bytes)
+38+L       signers data (0..320 bytes)
 ```
 
-For `String`, the prefix is the byte length. For `Vec`, it's the element count. Elements must have alignment 1 (enforced at compile time).
+`String<N>` uses a one-byte prefix by default. `Vec<T, N>` uses a two-byte prefix by default. String lengths count UTF-8 bytes; vector lengths count elements. Vector elements must satisfy Quasar's zero-copy element requirements.
+
+The macro exposes the bounds as `MIN_SPACE` and `MAX_SPACE`. For this account, `MIN_SPACE` is 38 bytes and `MAX_SPACE` is 390 bytes.
 
 ## Reading dynamic fields
 
-The macro generates typed accessors:
+The macro generates borrowed accessors:
 
 ```rust
 let label: &str = self.config.label();
 let signers: &[Address] = self.config.signers();
 ```
 
-Vec fields also get a mutable accessor for in-place modification without reallocation:
+## Initializing dynamic fields
 
-```rust
-let signers_mut: &mut [Address] = self.config.signers_mut();
-signers_mut[0] = new_address;
-```
-
-## Writing dynamic fields
-
-`set_inner()` writes everything at once during initialization:
+Add `set_inner` to the `#[account]` attribute when you want the generated initializer. It accepts a generated `MultisigConfigInner` value, the realloc payer, and the raw rent parameters:
 
 ```rust
 self.config.set_inner(
-    *self.creator.address(),
-    threshold,
-    bumps.config,
-    "",           // label: empty initially
-    signers,      // &[Address]
-    self.creator.to_account_view(),  // payer for realloc
-    Some(&**self.rent),
-)
+    MultisigConfigInner {
+        creator: *self.creator.address(),
+        threshold,
+        bump: bumps.config,
+        label: "",
+        signers,
+    },
+    self.creator.to_account_view(),
+    self.rent.lamports_per_byte(),
+    self.rent.exemption_threshold_raw(),
+)?;
 ```
 
-Individual setters handle reallocation automatically after init:
+`set_inner` computes the exact compact size, adjusts the account's rent-exempt balance through the payer, resizes the data, and writes the fixed header and dynamic payloads. A value beyond its declared capacity returns `QuasarError::DynamicFieldTooLong`.
+
+## Mutating dynamic fields
+
+Use `as_mut(payer)` to load a mutation guard for an existing dynamic account:
 
 ```rust
-self.config.set_label(self.creator, "new label")?;
-```
-
-Exceeding the `MAX` returns `QuasarError::DynamicFieldTooLong`.
-
-## Ordering rules
-
-Dynamic fields must come **after** all fixed fields. This is enforced at compile time -- dynamic fields are accessed by walking length prefixes from the end of the fixed-field header, so they must be contiguous at the tail.
-
-No nested dynamic types either: `Vec<String>` and `Vec<Vec<Address>>` won't compile.
-
-## Tail fields
-
-If you have exactly one dynamic field and it's the last field, you can skip the length prefix entirely with a bare `&'a str` or `&'a [u8]`. The field consumes all remaining bytes in the account:
-
-```rust
-#[account(discriminator = 1)]
-pub struct Note<'a> {
-    pub author: Address,
-    pub content: &'a str,    // no prefix -- uses everything after `author`
+let mut guard = self.config.as_mut(self.creator.to_account_view());
+if !guard.label.set("new label") {
+    return Err(ProgramError::InvalidInstructionData);
+}
+if !guard.signers.set_from_slice(updated_signers) {
+    return Err(ProgramError::InvalidInstructionData);
 }
 ```
 
-Slightly more efficient than `String<MAX>` since there's no prefix overhead, but limited to one field and it must be last.
+The guard exposes bounded `PodString` and `PodVec` values. Their mutation methods report capacity failures as `false`; the `try_*` variants return a `ZeroPodError` instead. The guard saves on drop, recomputes the exact account size, moves lamports to or from the payer to preserve rent exemption, and resizes the account when the payload length changes. Call `guard.save()?` when the updated bytes must be visible before the guard leaves scope, such as before a CPI.
 
-## Smaller prefixes
+## Ordering rules
 
-The default `u32` prefix matches Borsh encoding. If you don't need Borsh compatibility, smaller prefixes save a few bytes:
+Fixed fields must come before all dynamic fields. Quasar rejects a fixed field after a `String` or `Vec` because compact payloads occupy the tail of the account.
+
+Nested dynamic fields such as `Vec<String<32>, 10>` are not supported. Store a flat zero-copy element type or split the nested data into another account.
+
+Borrowed `&str` and `&[T]` values are supported as bounded instruction arguments with `#[max(N)]`; they are not account field types. Account data must use `String<N>` or `Vec<T, N>`.
+
+## Prefix widths
+
+The optional final generic selects the prefix type or its width in bytes:
 
 ```rust
-pub name: String<u8, 32>,        // 1-byte prefix instead of 4
-pub items: Vec<Address, u8, 10>, // 1-byte prefix instead of 4
+pub name: String<4096, u16>,       // 2-byte prefix, max 4096 bytes
+pub items: Vec<Address, 10, u8>,   // 1-byte prefix, max 10 elements
 ```
+
+Accepted prefix types are `u8`, `u16`, `u32`, and `u64`; the equivalent widths are `1`, `2`, `4`, and `8`. The declared capacity must fit in the selected prefix.

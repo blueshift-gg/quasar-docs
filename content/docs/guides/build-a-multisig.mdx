@@ -59,14 +59,14 @@ src/
 ```rust
 use quasar_lang::prelude::*;
 
-#[account(discriminator = 1)]
+#[account(discriminator = 1, set_inner)]
 #[seeds(b"multisig", creator: Address)]
-pub struct MultisigConfig<\'a> {
+pub struct MultisigConfig {
     pub creator: Address,
     pub threshold: u8,
     pub bump: u8,
-    pub label: String<\'a, 32>,
-    pub signers: Vec<\'a, Address, 10>,
+    pub label: String<32>,
+    pub signers: Vec<Address, 10>,
 }
 ```
 
@@ -76,17 +76,17 @@ pub struct MultisigConfig<\'a> {
 - **`bump`** -- PDA bump seed used by existing-account verification.
 
 **Dynamic fields** follow:
-- **`label: String<\'a, 32>`** -- Human-readable label (max 32 bytes). Stored as a 4-byte length prefix followed by UTF-8 bytes, directly in the account buffer.
-- **`signers: Vec<\'a, Address, 10>`** -- Authorized signer addresses (max 10). Stored as a 4-byte count prefix followed by elements.
+- **`label: String<32>`** -- Human-readable label with a 32-byte capacity and a one-byte length prefix.
+- **`signers: Vec<Address, 10>`** -- Up to 10 authorized signer addresses with a two-byte element-count prefix.
 
-The `\'a` lifetime ties dynamic fields to the account's data buffer -- read and written in place with no heap allocation. See [Dynamic Fields](/docs/zero-copy/dynamic-fields).
+The account type has no lifetime parameter. Quasar validates the compact account buffer and generates borrowed `label()` and `signers()` accessors. See [Dynamic Fields](/docs/zero-copy/dynamic-fields).
 
 On-disk layout:
 
 ```
 [disc: 1B][creator: 32B][threshold: 1B][bump: 1B]
-[label_len: 4B][label_data: 0-32B]
-[signers_count: 4B][signers_data: 0-320B]
+[label_len: 1B][signers_count: 2B]
+[label_data: 0-32B][signers_data: 0-320B]
 ```
 
 Account size varies with content. Quasar handles allocation and reallocation automatically.
@@ -139,7 +139,7 @@ mod quasar_multisig {
 
 `create` and `execute_transfer` use `CtxWithRemaining<T>` instead of `Ctx<T>` because the number of signers varies per transaction. `ctx.remaining_accounts()` returns an iterator over accounts beyond those in the struct. See [Remaining Accounts](/docs/features/remaining-accounts).
 
-`set_label` takes a `String<32>` -- deserialized directly from instruction data as a 4-byte length prefix plus UTF-8 bytes.
+`set_label` takes a `String<32>`, decoded from compact instruction data as a one-byte length prefix plus UTF-8 bytes.
 
 `instructions/mod.rs`:
 
@@ -163,30 +163,29 @@ pub use execute_transfer::*;
 
 ```rust
 use {
-    crate::state::MultisigConfig,
+    crate::state::{MultisigConfig, MultisigConfigInner},
     quasar_lang::{prelude::*, remaining::RemainingAccounts},
 };
 
 #[derive(Accounts)]
-pub struct Create<\'info> {
+pub struct Create {
     #[account(mut)]
     pub creator: Signer,
     #[account(init, mut, payer = creator, address = MultisigConfig::seeds(creator.address()))]
-    pub config: Account<MultisigConfig<\'info>>,
+    pub config: Account<MultisigConfig>,
     pub rent: Sysvar<Rent>,
     pub system_program: Program<SystemProgram>,
 }
 ```
 
 `MultisigConfig::seeds(creator.address())` gives each creator one multisig and
-records the verified bump in `ctx.bumps.config`. Note
-`Account<MultisigConfig<\'info>>` (not a reference) -- required for dynamic
-fields because the framework needs ownership to manage reallocation.
+records the verified bump in `ctx.bumps.config`. Dynamic fields do not add a
+lifetime to either `MultisigConfig` or `Account<MultisigConfig>`.
 
 ### The handler
 
 ```rust
-impl<\'info> Create<\'info> {
+impl Create {
     #[inline(always)]
     pub fn create_multisig(
         &mut self,
@@ -217,13 +216,16 @@ impl<\'info> Create<\'info> {
         let signers = unsafe { core::slice::from_raw_parts(addrs_ptr, count) };
 
         self.config.set_inner(
-            *self.creator.address(),
-            threshold,
-            bumps.config,
-            "",
-            signers,
+            MultisigConfigInner {
+                creator: *self.creator.address(),
+                threshold,
+                bump: bumps.config,
+                label: "",
+                signers,
+            },
             self.creator.to_account_view(),
-            Some(&**self.rent),
+            self.rent.lamports_per_byte(),
+            self.rent.exemption_threshold_raw(),
         )
     }
 }
@@ -235,7 +237,7 @@ The `MaybeUninit` array avoids heap allocation -- safe because `count` tracks in
 
 Threshold must be at least 1 and at most the signer count: zero would allow unapproved transfers, and exceeding the count would block all transfers.
 
-`set_inner` for dynamic accounts takes a payer (for reallocation lamports) and optional `Rent` reference, since dynamic fields may change account size.
+The `set_inner` opt-in generates `MultisigConfigInner`. The initializer computes the exact compact size, uses the creator as the realloc payer, and uses the supplied rent parameters to keep the account rent-exempt.
 
 ## The deposit instruction
 
@@ -249,16 +251,16 @@ use {crate::state::MultisigConfig, quasar_lang::prelude::*};
 pub struct MultisigVaultPda;
 
 #[derive(Accounts)]
-pub struct Deposit<\'info> {
+pub struct Deposit {
     #[account(mut)]
     pub depositor: Signer,
-    pub config: Account<MultisigConfig<\'info>>,
+    pub config: Account<MultisigConfig>,
     #[account(mut, address = MultisigVaultPda::seeds(config.address()))]
     pub vault: UncheckedAccount,
     pub system_program: Program<SystemProgram>,
 }
 
-impl<\'info> Deposit<\'info> {
+impl Deposit {
     #[inline(always)]
     pub fn deposit(&self, amount: u64) -> Result<(), ProgramError> {
         self.system_program
@@ -286,12 +288,12 @@ use {
 };
 
 #[derive(Accounts)]
-pub struct ExecuteTransfer<\'info> {
+pub struct ExecuteTransfer {
     #[account(
         has_one(creator),
         address = MultisigConfig::seeds(creator.address())
     )]
-    pub config: Account<MultisigConfig<\'info>>,
+    pub config: Account<MultisigConfig>,
     pub creator: UncheckedAccount,
     #[account(mut, address = MultisigVaultPda::seeds(config.address()))]
     pub vault: UncheckedAccount,
@@ -304,7 +306,7 @@ pub struct ExecuteTransfer<\'info> {
 ### The handler
 
 ```rust
-impl<\'info> ExecuteTransfer<\'info> {
+impl ExecuteTransfer {
     #[inline(always)]
     pub fn verify_and_transfer(
         &self,
@@ -352,7 +354,7 @@ Load the stored signer list, count how many remaining accounts are both transact
 use {crate::state::MultisigConfig, quasar_lang::prelude::*};
 
 #[derive(Accounts)]
-pub struct SetLabel<\'info> {
+pub struct SetLabel {
     #[account(mut)]
     pub creator: Signer,
     #[account(
@@ -360,19 +362,23 @@ pub struct SetLabel<\'info> {
         has_one(creator),
         address = MultisigConfig::seeds(creator.address())
     )]
-    pub config: Account<MultisigConfig<\'info>>,
+    pub config: Account<MultisigConfig>,
     pub system_program: Program<SystemProgram>,
 }
 
-impl<\'info> SetLabel<\'info> {
+impl SetLabel {
     #[inline(always)]
     pub fn update_label(&mut self, label: &str) -> Result<(), ProgramError> {
-        self.config.set_label(self.creator, label)
+        let mut guard = self.config.as_mut(self.creator.to_account_view());
+        if !guard.label.set(label) {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        Ok(())
     }
 }
 ```
 
-Only the creator can update (`has_one(creator)` + `Signer`). `set_label` is generated by `#[account]` and handles reallocation if the new value changes account size.
+Only the creator can update (`has_one(creator)` + `Signer`). The mutation guard saves on drop, returns excess rent to the creator when the label shrinks, and takes the required lamports from the creator when it grows.
 
 ## Testing
 
@@ -399,7 +405,7 @@ cargo test-sbf
 - **Dynamic fields** -- `String` and `Vec` stored directly in account data with zero-copy access.
 - **Remaining accounts** -- `CtxWithRemaining<T>` accepts variable-length account lists.
 - **Threshold authorization** -- Counts signer approvals against a stored threshold.
-- **Dynamic field mutation** -- `set_label` updates a string field with automatic reallocation.
+- **Dynamic field mutation** -- An `as_mut` guard updates bounded fields and resizes the compact account.
 - **PDA-signed transfers** -- Vault transfers require `invoke_signed` with signer seeds.
 
 ## Next steps

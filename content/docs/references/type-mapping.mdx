@@ -241,10 +241,10 @@ For accounts with `String` or `Vec` fields, space is variable. The macro provide
 
 ```rust
 #[account(discriminator = 5)]
-pub struct Profile<'a> {
+pub struct Profile {
     pub owner: Address,              // 32 bytes (fixed)
-    pub name: String<u16, 64>,       // 2 prefix + 0..64 data
-    pub tags: Vec<Address, u8, 10>,  // 1 prefix + 0..320 data
+    pub name: String<64, u16>,       // 2-byte prefix + 0..64 data
+    pub tags: Vec<Address, 10, u8>,  // 1-byte prefix + 0..320 data
 }
 // Profile::MIN_SPACE = 1 (disc) + 32 (fixed) + 2 + 1 = 36 bytes
 // Profile::MAX_SPACE = 36 + 64 + 320 = 420 bytes
@@ -254,39 +254,26 @@ Dynamic field layout:
 
 | Field Type | Prefix | Data Bytes |
 |------------|--------|------------|
-| `String` | `u32` (4 bytes) | 0..1024 |
-| `String<u16, N>` | `u16` (2 bytes) | 0..N |
-| `String<u8, N>` | `u8` (1 byte) | 0..N |
-| `Vec<T>` | `u32` (4 bytes) | 0..8 * sizeof(T) |
-| `Vec<T, u16, N>` | `u16` (2 bytes) | 0..N * sizeof(T) |
-| `Vec<T, u8, N>` | `u8` (1 byte) | 0..N * sizeof(T) |
-| `&str` (tail) | none | remaining bytes |
-| `&[u8]` (tail) | none | remaining bytes |
+| `String<N>` | `u8` (1 byte) | 0..N |
+| `String<N, u16>` | `u16` (2 bytes) | 0..N |
+| `String<N, u32>` | `u32` (4 bytes) | 0..N |
+| `Vec<T, N>` | `u16` (2 bytes) | 0..N * sizeof(T) |
+| `Vec<T, N, u8>` | `u8` (1 byte) | 0..N * sizeof(T) |
+| `Vec<T, N, u32>` | `u32` (4 bytes) | 0..N * sizeof(T) |
 
-`String` and `Vec` are marker types that configure the wire format:
+`String` and `Vec` are bounded account-field types. `N` is required and the optional final argument selects the prefix type:
 
 ```rust
-// String<P, MAX> where P = prefix type, MAX = max byte length
-pub name: String,             // String<u32, 1024> (defaults)
-pub tag: String<u8, 32>,     // u8 prefix, max 32 bytes
-pub bio: String<u16, 4096>,  // u16 prefix, max 4096 bytes
+// String<MAX, P> where P defaults to u8
+pub tag: String<32>,          // u8 prefix, max 32 bytes
+pub bio: String<4096, u16>,  // u16 prefix, max 4096 bytes
 
-// Vec<T, P, MAX> where T = element, P = prefix type, MAX = max count
-pub members: Vec<Address>,           // Vec<Address, u32, 8> (defaults)
-pub scores: Vec<PodU64, u8, 4>,     // u8 prefix, max 4 elements
+// Vec<T, MAX, P> where P defaults to u16
+pub members: Vec<Address, 8>,       // u16 prefix, max 8 elements
+pub scores: Vec<PodU64, 4, u8>,    // u8 prefix, max 4 elements
 ```
 
-### Tail fields
-
-A tail field (`&str` or `&[u8]`) consumes all remaining bytes with no length prefix. Must be the last dynamic field. Maximum size is 1024 bytes.
-
-```rust
-#[account(discriminator = 5)]
-pub struct Note<'a> {
-    pub author: Address,
-    pub content: &'a str,  // tail field -- no prefix, uses remaining data
-}
-```
+The equivalent numeric prefix widths are `1`, `2`, `4`, and `8`. Borrowed `&str` and `&[T]` values are supported for bounded instruction arguments, not account fields.
 
 ### Space override
 
@@ -294,7 +281,7 @@ Use `space = <expr>` on `init` to override computed space:
 
 ```rust
 #[account(init, payer = payer, space = 8 + 32 + 4 + name.len())]
-pub profile: Account<Profile<'info>>,
+pub profile: Account<Profile>,
 ```
 
 ---
@@ -319,9 +306,8 @@ The IDL generator maps Rust types to IDL primitives, which the TypeScript client
 | `i128` | `i128` | `bigint` | `getI128Codec()` |
 | `bool` | `bool` | `boolean` | `getBooleanCodec()` |
 | `Address` / `Pubkey` | `publicKey` | `Address` | `getAddressCodec()` (kit) |
-| `String` | `string` | `string` | -- |
-| `String<N>` | `{ string: { maxLength: N } }` | `string` | `getDynStringCodec()` |
-| `Vec<T, N>` | `{ vec: { items: T, maxLength: N } }` | `Array<T>` | `getDynVecCodec(T)` |
-| `&str` (tail) | `{ tail: { element: "string" } }` | `string` | `getUtf8Codec()` |
-| `&[u8]` (tail) | `{ tail: { element: "bytes" } }` | `Uint8Array` | `getBytesCodec()` |
+| `String<N>` | `string` + size-prefixed tail codec (`u8`, max N bytes) | `string` | Generated UTF-8 codec |
+| `Vec<T, N>` | `{ vec: T }` + size-prefixed tail codec (`u16`, max N items) | `Array<T>` | Generated item codec |
+| `#[max(N)] &str` (instruction argument) | Same compact `string` shape | `string` | Generated UTF-8 codec |
+| `#[max(N)] &[T]` (instruction argument) | Same compact `{ vec: T }` shape | `Array<T>` | Generated item codec |
 | Custom struct | `{ defined: "Name" }` | `Name` | `NameCodec` |

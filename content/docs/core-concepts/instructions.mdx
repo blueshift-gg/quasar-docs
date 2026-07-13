@@ -76,7 +76,7 @@ Wire format:
 
 ### Dynamic arguments
 
-Variable-length arguments use `String<MAX>` and `Vec<T, MAX>`. These are read from instruction data with a length prefix (default `u32`), validated, and produced as `&str` or `&[T]` slices pointing directly into the buffer:
+Variable-length arguments use `String<MAX>` and `Vec<T, MAX>`. `String` uses a `u8` length prefix by default, while `Vec` uses `u16`. Quasar validates the compact header and produces `&str` or `&[T]` slices pointing directly into instruction data:
 
 ```rust
 #[instruction(discriminator = 2)]
@@ -85,12 +85,12 @@ pub fn set_label(ctx: Ctx<SetLabel>, label: String<32>) -> Result<(), ProgramErr
 }
 ```
 
-Inside the handler, `label` is a `&str` -- the macro reads the u32 length prefix, validates that the length doesn't exceed `MAX`, checks UTF-8, and produces a slice into the instruction data. No allocation.
+Inside the handler, `label` is a `&str`. The macro reads its one-byte length prefix, validates the `MAX` bound and UTF-8, and produces a slice into the instruction data. No allocation.
 
 Wire format:
 ```text
 [0x02]                         <- discriminator (1 byte)
-[len: 4 bytes LE]              <- u32 string length
+[len: 1 byte]                  <- u8 string length
 [label: len bytes UTF-8]       <- string data
 ```
 

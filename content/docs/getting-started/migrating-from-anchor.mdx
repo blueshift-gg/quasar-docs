@@ -153,15 +153,15 @@ No `std::string::String`, `std::vec::Vec`, or heap allocation. Quasar provides i
 
 ```rust
 #[account(discriminator = 1)]
-pub struct MultisigConfig<'a> {
+pub struct MultisigConfig {
     pub creator: Address,
     pub threshold: u8,
-    pub label: String<'a, 32>,         // max 32 bytes, accessed as &str
-    pub signers: Vec<'a, Address, 10>, // max 10 elements, accessed as &[Address]
+    pub label: String<32>,         // max 32 bytes, read through label()
+    pub signers: Vec<Address, 10>, // max 10 elements, read through signers()
 }
 ```
 
-`String<'a, MAX>` and `Vec<'a, T, MAX>` are stored inline in the account data with a length prefix. They are read as `&str` and `&[T]` slices -- zero-copy, zero allocation. The `MAX` parameter sets the upper bound enforced at write time.
+`String<MAX>` and `Vec<T, MAX>` declare bounded compact account fields without adding a lifetime to the account struct. Their generated accessors return `&str` and `&[T]` views into account data. The capacity is enforced when the account is initialized or mutated.
 
 Use `log()` instead of `println!()` for on-chain logging.
 
@@ -178,4 +178,4 @@ Use `log()` instead of `println!()` for on-chain logging.
 | Discriminator optional | `#[instruction(discriminator = N)]` required |
 | `CpiContext::new(...)` | `.transfer(...).invoke()` |
 | Field-level `seeds` / `bump` | Typed `#[seeds(...)]`, `address = Type::seeds(...)`, and `self.field_signer(bumps)` |
-| `String` / `Vec` (heap) | `String<'a, MAX>` / `Vec<'a, T, MAX>` (zero-copy) |
+| `String` / `Vec` (heap) | `String<MAX>` / `Vec<T, MAX>` (zero-copy account fields) |

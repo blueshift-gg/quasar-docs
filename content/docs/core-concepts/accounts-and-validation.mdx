@@ -169,32 +169,36 @@ self.escrow.set_inner(
 
 ### Dynamic accounts
 
-Variable-length fields use `String<'a, MAX>` and `Vec<'a, T, MAX>` -- stored inline in account data with a length prefix, accessed as `&str` and `&[T]` slices:
+Variable-length fields use `String<MAX>` and `Vec<T, MAX>`. Quasar stores their length prefixes in the compact account header and their current payloads in the tail:
 
 ```rust
-#[account(discriminator = 1)]
-pub struct MultisigConfig<'a> {
+#[account(discriminator = 1, set_inner)]
+pub struct MultisigConfig {
     pub creator: Address,
     pub threshold: u8,
     pub bump: u8,
-    pub label: String<'a, 32>,         // max 32 bytes
-    pub signers: Vec<'a, Address, 10>, // max 10 elements
+    pub label: String<32>,         // max 32 bytes
+    pub signers: Vec<Address, 10>, // max 10 elements
 }
 ```
 
-Each dynamic field generates a getter (`label() -> &str`), a setter (`set_label(&mut self, payer, value)`), and a raw accessor (`label_raw() -> RawEncoded`) for CPI pass-through. Vec fields also get a mutable accessor (`signers_mut() -> &mut [Address]`).
-
-### Tail fields
-
-If you have **one** dynamic field and it's the last field in the struct, use a bare `&'a str` or `&'a [u8]` instead. No length prefix -- the field consumes all remaining bytes, which is slightly more efficient:
+Read accessors borrow the validated account buffer:
 
 ```rust
-#[account(discriminator = 1)]
-pub struct Note<'a> {
-    pub author: Address,
-    pub content: &'a str,
+let label: &str = self.config.label();
+let signers: &[Address] = self.config.signers();
+```
+
+To change a dynamic field, create a mutation guard with the account that pays or receives lamports during resize:
+
+```rust
+let mut guard = self.config.as_mut(self.creator.to_account_view());
+if !guard.label.set(label) {
+    return Err(ProgramError::InvalidInstructionData);
 }
 ```
+
+The guard saves on drop and resizes the account to the exact compact length. Borrowed `&str` and `&[T]` values are instruction argument types, not account field types.
 
 ### Discriminator rules
 
@@ -323,7 +327,7 @@ Resizes account data at runtime. If growing, lamports are taken from the payer t
 
 ```rust
 #[account(realloc = new_size, realloc::payer = authority)]
-pub config: Account<MultisigConfig<'info>>,
+pub config: Account<MultisigConfig>,
 ```
 
 ### Token / Mint / ATA

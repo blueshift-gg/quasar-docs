@@ -229,8 +229,11 @@ Instruction handlers return `Result<(), ProgramError>`. The `?` operator propaga
 
 ```rust
 pub fn handler(&mut self, amount: u64) -> Result<(), ProgramError> {
-    // Framework errors propagate via ?
-    self.config.set_label(self.creator, "new label")?;
+    // Dynamic field helpers report capacity errors explicitly.
+    let mut guard = self.config.as_mut(self.creator.to_account_view());
+    if !guard.label.set("new label") {
+        return Err(ProgramError::InvalidInstructionData);
+    }
 
     // Custom errors propagate via .into() + ?
     if amount == 0 {
