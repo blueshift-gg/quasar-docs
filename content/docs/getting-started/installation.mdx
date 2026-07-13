@@ -59,7 +59,7 @@ The upstream toolchain requires nightly Rust, the SBF target, and the linker:
 
 ```bash
 rustup toolchain install nightly
-rustup target add bpfel-unknown-none --toolchain nightly
+rustup component add rust-src --toolchain nightly
 cargo install sbpf-linker
 ```
 
