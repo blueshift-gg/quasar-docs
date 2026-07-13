@@ -35,9 +35,9 @@ It derefs to `MasterEditionPrefix`:
 
 ```rust
 // Fields accessible via zero-copy deref:
-edition.key()         // u8 (always 6 for MasterEditionV2)
-edition.supply()      // u64 -- number of editions printed
-edition.max_supply()  // Option<u64> -- None means unlimited
+edition.key()              // u8 (always 6 for MasterEditionV2)
+edition.supply()           // u64 -- number of editions printed
+edition.max_supply_value() // Option<u64> -- None means unlimited
 ```
 
 ## The MetadataProgram type
