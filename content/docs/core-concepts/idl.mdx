@@ -9,15 +9,24 @@ The IDL is a JSON file describing your program's interface -- instructions, acco
 
 ```json
 {
+  "spec": "quasar-idl/1.0.0",
+  "name": "quasar_escrow",
+  "version": "0.1.0",
   "address": "22222222222222222222222222222222222222222222",
-  "metadata": { "name": "quasar_escrow", "version": "0.1.0", "spec": "0.1.0" },
-  "instructions": [ ... ],
-  "accounts": [ ... ],
-  "events": [ ... ],
-  "types": [ ... ],
-  "errors": [ ... ]
+  "metadata": {
+    "crateName": "quasar-escrow",
+    "generatorVersion": "0.1.0",
+    "schemaVersion": "1.0.0"
+  },
+  "instructions": [],
+  "accounts": [],
+  "events": [],
+  "types": [],
+  "errors": []
 }
 ```
+
+`spec` identifies the IDL format and schema family. The top-level `version` is the program crate version. `metadata` records the Cargo package name, the Quasar generator version, and the schema version separately so consumers do not have to infer one version from another.
 
 ### Instructions
 
