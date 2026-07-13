@@ -47,27 +47,28 @@ quasar init my-app --framework mollusk --template full
 
 ---
 
-### `quasar new instruction`
+### `quasar add --instruction`
 
-Generate a new instruction handler with auto-incremented discriminator.
+Add a new instruction handler to the current project.
 
 ```
-quasar new instruction <NAME>
+quasar add --instruction <NAME>
 ```
 
-| Argument | Description |
-|----------|-------------|
-| `NAME` | Instruction name in `snake_case` (e.g., `transfer`, `create_pool`) |
+| Flag | Description |
+|------|-------------|
+| `-i, --instruction <NAME>` | Instruction name; hyphens become underscores, then the result must be a valid Rust identifier such as `transfer` or `create_pool` |
 
 This command:
-1. Creates `src/instructions/<name>.rs` with an `Accounts` struct and handler method
-2. Adds `mod <name>;` and `pub use <name>::*;` to `src/instructions/mod.rs`
-3. Inserts a new `#[instruction(discriminator = N)]` entry in `src/lib.rs` with `N` set to one more than the highest existing discriminator
+
+1. Creates `src/instructions/<name>.rs` with an `Accounts` struct and handler method.
+2. Adds `mod <name>;` and `pub use <name>::*;` to `src/instructions/mod.rs`.
+3. Inserts a new auto-discriminated `#[instruction]` entry in the `#[program]` module.
 
 **Example:**
 
 ```bash
-quasar new instruction withdraw
+quasar add --instruction withdraw
 ```
 
 Creates `src/instructions/withdraw.rs`:
@@ -77,7 +78,6 @@ use quasar_lang::prelude::*;
 
 #[derive(Accounts)]
 pub struct Withdraw {
-    #[account(mut)]
     pub payer: Signer,
     pub system_program: Program<SystemProgram>,
 }
@@ -93,7 +93,7 @@ impl Withdraw {
 And adds to `src/lib.rs`:
 
 ```rust
-#[instruction(discriminator = 2)]  // auto-incremented
+#[instruction]
 pub fn withdraw(ctx: Ctx<Withdraw>) -> Result<(), ProgramError> {
     ctx.accounts.withdraw()
 }
