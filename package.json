@@ -4,11 +4,16 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "prebuild": "npm run check:release-metadata",
     "build": "next build",
+    "check:release-metadata": "node scripts/check-release-metadata.mjs",
     "dev": "next dev",
     "start": "next start",
+    "prepreview": "npm run check:release-metadata",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "predeploy": "npm run check:release-metadata",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "preupload": "npm run check:release-metadata",
     "upload": "opennextjs-cloudflare build && opennextjs-cloudflare upload",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
   },
