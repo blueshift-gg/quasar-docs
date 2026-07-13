@@ -11,10 +11,10 @@ description: Build your first Quasar program in minutes.
 quasar init my-program
 ```
 
-The CLI prompts for toolchain, testing framework, and template. Skip prompts with flags:
+Providing a name fills the project-name prompt, but the CLI still asks for the remaining choices. Add `--yes` to use explicit flags and saved defaults without prompting:
 
 ```bash
-quasar init my-program --toolchain solana --test-language rust --rust-framework quasar-svm --template minimal
+quasar init my-program --yes --toolchain solana --test-language rust --rust-framework quasar-svm --template minimal
 ```
 
 ## Templates
