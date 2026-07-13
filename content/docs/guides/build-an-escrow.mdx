@@ -284,7 +284,7 @@ pub struct Take {
         mut,
         has_one(maker, maker_ta_b),
         constraints(escrow.receive > 0),
-        close = taker,
+        close(dest = taker),
         address = Escrow::seeds(maker.address())
     )]
     pub escrow: Account<Escrow>,
@@ -311,7 +311,7 @@ pub struct Take {
 - **`has_one(maker)`** -- Checks `escrow.maker == maker.address()`.
 - **`has_one(maker_ta_b)`** -- Ensures tokens go to the right destination.
 - **`constraints(escrow.receive > 0)`** -- Escrow must have a nonzero receive amount.
-- **`close = taker`** -- Closes the escrow and sends rent to the taker.
+- **`close(dest = taker)`** -- Closes the escrow and sends rent to the taker.
 - **`address = Escrow::seeds(maker.address())`** -- Verifies the same typed PDA layout declared on `Escrow` and records the bump.
 
 ### The handlers
@@ -367,7 +367,7 @@ pub struct Refund {
     #[account(
         mut,
         has_one(maker),
-        close = maker,
+        close(dest = maker),
         address = Escrow::seeds(maker.address())
     )]
     pub escrow: Account<Escrow>,
@@ -405,7 +405,7 @@ impl Refund {
 }
 ```
 
-Same pattern as take's withdrawal: transfer tokens back to the maker via PDA-signed CPI, close the vault, and `close = maker` closes the escrow account too.
+Same pattern as take's withdrawal: transfer tokens back to the maker via PDA-signed CPI, close the vault, and `close(dest = maker)` closes the escrow account too.
 
 `has_one(maker)` combined with `Signer` ensures only the original maker can refund.
 
