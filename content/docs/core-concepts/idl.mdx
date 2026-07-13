@@ -51,7 +51,32 @@ Each instruction includes its name, discriminator bytes, accounts with flags, an
 - PDA seeds are encoded as `const` (literal bytes) or `account` (reference to another account)
 - `writable` and `signer` flags appear only when `true`
 - Known program addresses are included as `address` fields
-- Instructions using `CtxWithRemaining` set `hasRemaining: true`
+
+Instructions using `CtxWithRemaining` include a structured `remainingAccounts` contract:
+
+```json
+{
+  "remainingAccounts": {
+    "kind": "append",
+    "name": "remainingAccounts",
+    "min": 0,
+    "max": null,
+    "item": {
+      "clientType": "accountMeta",
+      "signer": "input",
+      "writable": "input"
+    },
+    "policy": {
+      "position": "afterDeclaredAccounts",
+      "order": "preserveInput"
+    }
+  }
+}
+```
+
+`kind: "append"` and `position: "afterDeclaredAccounts"` place these entries after the declared account list. `order: "preserveInput"` requires generated clients to retain caller order. The caller supplies each account meta and its signer and writable flags. `min: 0` permits an empty tail, while `max: null` means the IDL itself does not set a maximum. On-chain code can still impose a typed bound with `Remaining<T, N>`.
+
+The normalized v0.1 ABI baseline stores the same object under `remaining_accounts`; generated IDL uses the camel-cased `remainingAccounts` key shown above.
 
 Accounts and events each list their name and discriminator. Event discriminators are prefixed with `0xFF` on the wire to distinguish them from instructions.
 
