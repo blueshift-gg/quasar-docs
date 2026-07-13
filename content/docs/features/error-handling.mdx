@@ -34,7 +34,7 @@ pub enum QuasarError {
     InvalidSeeds,
     /// A `#[account(constraint = ...)]` expression evaluated to false.
     ConstraintViolation,
-    /// `#[account(has_one = ...)]` field does not match.
+    /// `#[account(has_one(...))]` field does not match.
     HasOneMismatch,
     /// Account discriminator does not match the expected value.
     InvalidDiscriminator,

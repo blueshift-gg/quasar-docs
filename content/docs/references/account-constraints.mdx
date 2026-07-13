@@ -8,7 +8,7 @@ Account constraints are attributes on fields in a `#[derive(Accounts)]` struct. 
 ```rust
 #[derive(Accounts)]
 pub struct MyInstruction {
-    #[account(mut, has_one = authority)]
+    #[account(mut, has_one(authority))]
     pub vault: Account<Vault>,
     pub authority: Signer,
 }
@@ -20,7 +20,7 @@ pub struct MyInstruction {
 
 ```rust
 #[account(
-    has_one = authority @ MyError::Unauthorized,
+    has_one(authority) @ MyError::Unauthorized,
     constraint = vault.balance.get() > 0 @ MyError::EmptyVault,
     address = EXPECTED_ADDRESS @ MyError::WrongAddress
 )]
@@ -83,13 +83,13 @@ const ADMIN: Address = address!("Admin111111111111111111111111111111111111111");
 pub admin: Signer,
 ```
 
-### `has_one = <field>`
+### `has_one(...)`
 
 Validates that a stored address field matches another account in the struct. The account type must have a field with the same name as the referenced account.
 
 | | |
 |---|---|
-| **Syntax** | `#[account(has_one = field_name)]` or `#[account(has_one = field_name @ ErrorVariant)]` |
+| **Syntax** | `#[account(has_one(field_name, ...))]` or `#[account(has_one(field_name) @ ErrorVariant)]` |
 | **Error on failure** | `QuasarError::HasOneMismatch` (default) or custom |
 | **Generated check** | `account.field_name == field_name.address()` |
 
@@ -102,17 +102,18 @@ pub struct Vault {
 
 #[derive(Accounts)]
 pub struct Withdraw {
-    #[account(mut, has_one = authority, has_one = mint)]
+    #[account(mut, has_one(authority, mint))]
     pub vault: Account<Vault>,
     pub authority: Signer,
     pub mint: Account<Mint>,
 }
 ```
 
-Multiple `has_one` checks can be specified on the same field:
+List multiple stored address fields in one check. Use separate checks when they
+need different custom errors:
 
 ```rust
-#[account(has_one = authority, has_one = mint @ MyError::WrongMint)]
+#[account(has_one(authority), has_one(mint) @ MyError::WrongMint)]
 ```
 
 ### `constraint = <expr>`
@@ -532,7 +533,7 @@ pub struct CreateNft {
 | `mut` | `#[account(mut)]` | `Immutable` |
 | `dup` | `#[account(dup)]` | -- |
 | `address` | `#[account(address = EXPR)]` | `AddressMismatch` |
-| `has_one` | `#[account(has_one = field)]` | `HasOneMismatch` |
+| `has_one` | `#[account(has_one(field, ...))]` | `HasOneMismatch` |
 | `constraint` | `#[account(constraint = EXPR)]` | `ConstraintViolation` |
 | `init` | `#[account(init, payer = p)]` | `AccountAlreadyInitialized` |
 | `init_if_needed` | `#[account(init_if_needed, payer = p)]` | -- |
