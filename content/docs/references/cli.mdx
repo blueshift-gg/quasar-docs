@@ -152,8 +152,9 @@ quasar test [OPTIONS]
 | `--no-build` | Skip the build step (use existing binary) |
 
 Test framework behavior:
-- **Rust** (`mollusk`, `quasarsvm-rust`): Runs `cargo test` and parses output
-- **TypeScript** (`quasarsvm-web3js`, `quasarsvm-kit`): Runs Mocha and parses JSON reporter output
+
+- **Rust** (`testing.language = "rust"`): Runs the command in `[testing.rust.test]`.
+- **TypeScript** (`testing.language = "typescript"`): Runs `[testing.typescript.install]` when `node_modules` is absent, then runs `[testing.typescript.test]`.
 
 **Examples:**
 
