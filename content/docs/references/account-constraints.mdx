@@ -446,69 +446,98 @@ pub struct InitAta {
 
 ---
 
-## Metadata Constraints
+## Metadata Account Behavior
 
-Used with `init` to create Metaplex metadata and master edition accounts.
+`metadata(...)` validates a metadata account against its program, mint, and PDA address. With `init`, it supplies the arguments for `create_metadata_accounts_v3`.
 
-### `metadata::name = <expr>`
+| Argument | Required for validation | Required for initialization |
+|----------|-------------------------|-----------------------------|
+| `program = <field>` | Yes | Yes |
+| `mint = <field>` | Yes | Yes |
+| `mint_authority = <field>` | No | Yes |
+| `update_authority = <field>` | No | Yes |
+| `system_program = <field>` | No | Yes |
+| `rent = <field>` | No | Yes |
+| `name = <str>` | No | Yes |
+| `symbol = <str>` | No | Yes |
+| `uri = <str>` | No | Yes |
+| `seller_fee_basis_points = <u16>` | No | No, defaults to `0` |
+| `is_mutable = <bool>` | No | No, defaults to `true` |
 
-Sets the NFT/token name in the metadata account.
+## Master Edition Account Behavior
 
-### `metadata::symbol = <expr>`
+`master_edition(...)` validates a master edition against its program, mint, and PDA address. With `init`, it supplies the arguments for `create_master_edition_v3`.
 
-Sets the token symbol.
+| Argument | Required for validation | Required for initialization |
+|----------|-------------------------|-----------------------------|
+| `program = <field>` | Yes | Yes |
+| `mint = <field>` | Yes | Yes |
+| `update_authority = <field>` | No | Yes |
+| `mint_authority = <field>` | No | Yes |
+| `metadata = <field>` | No | Yes |
+| `token_program = <field>` | No | Yes |
+| `system_program = <field>` | No | Yes |
+| `rent = <field>` | No | Yes |
+| `max_supply = Some(<u64>)` | No | No, defaults to `Some(0)` |
 
-### `metadata::uri = <expr>`
-
-Sets the metadata URI.
-
-### `metadata::seller_fee_basis_points = <expr>`
-
-Sets the seller fee in basis points (0-10000).
-
-### `metadata::is_mutable = <expr>`
-
-Sets whether the metadata can be updated after creation.
-
-### `master_edition::max_supply = <expr>`
-
-Sets the maximum supply for a master edition. Use `0` for unlimited.
+Use `max_supply = None` for unlimited printable editions. A limited master edition uses `Some(n)`, and `Some(0)` creates a unique 1/1 NFT. Declare the metadata field before the master-edition field because Quasar initializes accounts in declaration order.
 
 ```rust
-use quasar_spl::accounts::mint;
+use quasar_metadata::{
+    accounts::{master_edition, metadata},
+    MasterEditionAccount, MetadataAccount, MetadataProgram,
+};
+use quasar_spl::{accounts::mint, Mint, TokenProgram};
 
 #[derive(Accounts)]
-#[instruction(name: &[u8], symbol: &[u8], uri: &[u8])]
 pub struct CreateNft {
+    #[account(mut)]
+    pub payer: Signer,
+    pub authority: Signer,
+    pub metadata_program: Program<MetadataProgram>,
+    pub token_program: Program<TokenProgram>,
+    pub system_program: Program<SystemProgram>,
+    pub rent: Sysvar<Rent>,
     #[account(
         init,
         payer = payer,
         mint(decimals = 0, authority = authority, token_program = token_program)
     )]
-    pub mint: InterfaceAccount<Mint>,
+    pub mint: Account<Mint>,
     #[account(
         init,
         payer = payer,
-        metadata::name = name,
-        metadata::symbol = symbol,
-        metadata::uri = uri,
-        metadata::seller_fee_basis_points = 500,
-        metadata::is_mutable = true
+        metadata(
+            program = metadata_program,
+            mint = mint,
+            mint_authority = authority,
+            update_authority = authority,
+            system_program = system_program,
+            rent = rent,
+            name = "My NFT",
+            symbol = "MNFT",
+            uri = "https://example.com/nft.json",
+            seller_fee_basis_points = 500,
+            is_mutable = true
+        )
     )]
     pub metadata: Account<MetadataAccount>,
     #[account(
         init,
         payer = payer,
-        master_edition::max_supply = 0
+        master_edition(
+            program = metadata_program,
+            mint = mint,
+            update_authority = authority,
+            mint_authority = authority,
+            metadata = metadata,
+            token_program = token_program,
+            system_program = system_program,
+            rent = rent,
+            max_supply = Some(0)
+        )
     )]
     pub master_edition: Account<MasterEditionAccount>,
-    #[account(mut)]
-    pub payer: Signer,
-    pub authority: Signer,
-    pub token_program: Interface<TokenInterface>,
-    pub system_program: Program<SystemProgram>,
-    pub metadata_program: Program<MetadataProgram>,
-    pub rent: Sysvar<Rent>,
 }
 ```
 
@@ -534,9 +563,5 @@ pub struct CreateNft {
 | `token(...)` | `#[account(token(mint = mint, authority = authority, token_program = token_program))]` | -- |
 | `mint(...)` | `#[account(mint(authority = authority, decimals = 6, token_program = token_program))]` | -- |
 | `associated_token(...)` | `#[account(associated_token(mint = mint, authority = authority, token_program = token_program))]` | -- |
-| `metadata::name` | `#[account(metadata::name = EXPR)]` | -- |
-| `metadata::symbol` | `#[account(metadata::symbol = EXPR)]` | -- |
-| `metadata::uri` | `#[account(metadata::uri = EXPR)]` | -- |
-| `metadata::seller_fee_basis_points` | `#[account(metadata::seller_fee_basis_points = EXPR)]` | -- |
-| `metadata::is_mutable` | `#[account(metadata::is_mutable = EXPR)]` | -- |
-| `master_edition::max_supply` | `#[account(master_edition::max_supply = EXPR)]` | -- |
+| `metadata(...)` | `#[account(metadata(program = metadata_program, mint = mint))]` | -- |
+| `master_edition(...)` | `#[account(master_edition(program = metadata_program, mint = mint))]` | -- |
