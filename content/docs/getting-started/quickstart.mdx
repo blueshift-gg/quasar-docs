@@ -43,6 +43,12 @@ Add instructions, state, and errors to your project. Flags can be combined:
 quasar add -i transfer -s vault -e access
 ```
 
+Lock the new instruction's auto discriminator before you build or deploy:
+
+```bash
+quasar lint --update-lock
+```
+
 | Flag | What it creates |
 |------|----------------|
 | `-i transfer` | `src/instructions/transfer.rs` + wires it into `lib.rs` with the next discriminator |
