@@ -9,11 +9,11 @@ CPI in Quasar is method-style -- you call methods on program types or account ty
 
 ```rust
 // No PDA signer
-self.system_program.transfer(self.user, self.vault, amount).invoke()?;
+self.system_program.transfer(&self.user, &self.vault, amount).invoke()?;
 
 // Single PDA signer
 self.token_program
-    .transfer(self.vault_ta_a, self.taker_ta_a, self.escrow, amount)
+    .transfer(&self.vault_ta_a, &self.taker_ta_a, &self.escrow, amount)
     .invoke_signed(&seeds)?;
 
 // Multiple PDA signers
@@ -27,13 +27,13 @@ Every CPI helper returns a `CpiCall<'a, ACCTS, DATA>` where account count and da
 Methods on `Program<System>` accept typed accounts directly:
 
 ```rust
-self.system_program.transfer(self.user, self.vault, amount).invoke()?;
+self.system_program.transfer(&self.user, &self.vault, amount).invoke()?;
 
 self.system_program
-    .create_account_with_minimum_balance(self.payer, self.new_account, space, &owner, Some(&*self.rent))?
+    .create_account_with_minimum_balance(&self.payer, &self.new_account, space, &owner, Some(&*self.rent))?
     .invoke()?;
 
-self.system_program.assign(self.account, &new_owner).invoke()?;
+self.system_program.assign(&self.account, &new_owner).invoke()?;
 ```
 
 Also available as free functions in `quasar_lang::cpi::system` when you're working with raw `AccountView` references.
@@ -45,12 +45,12 @@ The `quasar-spl` crate provides the same method-style CPI on `Program<Token>`:
 ```rust
 // Transfer tokens
 self.token_program
-    .transfer(self.maker_ta_a, self.vault_ta_a, self.maker, amount)
+    .transfer(&self.maker_ta_a, &self.vault_ta_a, &self.maker, amount)
     .invoke()?;
 
 // Close a token account
 self.vault_ta_a
-    .close(self.token_program, self.taker, self.escrow)
+    .close(&self.token_program, &self.taker, &self.escrow)
     .invoke_signed(&seeds)?;
 ```
 
@@ -63,11 +63,11 @@ pub fn withdraw_tokens_and_close(&mut self, bumps: &TakeBumps) -> Result<(), Pro
     let seeds = bumps.escrow_seeds();
 
     self.token_program
-        .transfer(self.vault_ta_a, self.taker_ta_a, self.escrow, self.vault_ta_a.amount())
+        .transfer(&self.vault_ta_a, &self.taker_ta_a, &self.escrow, self.vault_ta_a.amount())
         .invoke_signed(&seeds)?;
 
     self.vault_ta_a
-        .close(self.token_program, self.taker, self.escrow)
+        .close(&self.token_program, &self.taker, &self.escrow)
         .invoke_signed(&seeds)
 }
 ```
@@ -114,13 +114,13 @@ Add `event_authority` and `program` to your accounts struct, then call `emit_cpi
 
 ```rust
 #[derive(Accounts)]
-pub struct EmitViaCpi<'info> {
-    pub signer: &'info Signer,
-    pub event_authority: &'info EventAuthority,
-    pub program: &'info Program<MyProgram>,
+pub struct EmitViaCpi {
+    pub signer: Signer,
+    pub event_authority: EventAuthority,
+    pub program: Program<MyProgram>,
 }
 
-impl<'info> EmitViaCpi<'info> {
+impl EmitViaCpi {
     pub fn handler(&self, value: u64) -> Result<(), ProgramError> {
         emit_cpi!(SimpleEvent { value })?;
         Ok(())

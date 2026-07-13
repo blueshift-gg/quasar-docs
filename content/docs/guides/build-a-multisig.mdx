@@ -168,11 +168,12 @@ use {
 
 #[derive(Accounts)]
 pub struct Create<\'info> {
-    pub creator: &\'info mut Signer,
+    #[account(mut)]
+    pub creator: Signer,
     #[account(init, mut, payer = creator, seeds = [b"multisig", creator], bump)]
     pub config: Account<MultisigConfig<\'info>>,
-    pub rent: &\'info Sysvar<Rent>,
-    pub system_program: &\'info Program<System>,
+    pub rent: Sysvar<Rent>,
+    pub system_program: Program<System>,
 }
 ```
 
@@ -241,18 +242,19 @@ use {crate::state::MultisigConfig, quasar_lang::prelude::*};
 
 #[derive(Accounts)]
 pub struct Deposit<\'info> {
-    pub depositor: &\'info mut Signer,
+    #[account(mut)]
+    pub depositor: Signer,
     pub config: Account<MultisigConfig<\'info>>,
     #[account(mut, seeds = [b"vault", config], bump)]
-    pub vault: &\'info mut UncheckedAccount,
-    pub system_program: &\'info Program<System>,
+    pub vault: UncheckedAccount,
+    pub system_program: Program<System>,
 }
 
 impl<\'info> Deposit<\'info> {
     #[inline(always)]
     pub fn deposit(&self, amount: u64) -> Result<(), ProgramError> {
         self.system_program
-            .transfer(self.depositor, self.vault, amount)
+            .transfer(&self.depositor, &self.vault, amount)
             .invoke()
     }
 }
@@ -282,11 +284,12 @@ pub struct ExecuteTransfer<\'info> {
         bump = config.bump
     )]
     pub config: Account<MultisigConfig<\'info>>,
-    pub creator: &\'info UncheckedAccount,
+    pub creator: UncheckedAccount,
     #[account(mut, seeds = [b"vault", config], bump)]
-    pub vault: &\'info mut UncheckedAccount,
-    pub recipient: &\'info mut UncheckedAccount,
-    pub system_program: &\'info Program<System>,
+    pub vault: UncheckedAccount,
+    #[account(mut)]
+    pub recipient: UncheckedAccount,
+    pub system_program: Program<System>,
 }
 ```
 
@@ -325,7 +328,7 @@ impl<\'info> ExecuteTransfer<\'info> {
 
         let seeds = bumps.vault_seeds();
         self.system_program
-            .transfer(self.vault, self.recipient, amount)
+            .transfer(&self.vault, &self.recipient, amount)
             .invoke_signed(&seeds)
     }
 }
@@ -342,7 +345,8 @@ use {crate::state::MultisigConfig, quasar_lang::prelude::*};
 
 #[derive(Accounts)]
 pub struct SetLabel<\'info> {
-    pub creator: &\'info mut Signer,
+    #[account(mut)]
+    pub creator: Signer,
     #[account(
         mut,
         has_one = creator,
@@ -350,7 +354,7 @@ pub struct SetLabel<\'info> {
         bump = config.bump
     )]
     pub config: Account<MultisigConfig<\'info>>,
-    pub system_program: &\'info Program<System>,
+    pub system_program: Program<System>,
 }
 
 impl<\'info> SetLabel<\'info> {

@@ -11,10 +11,11 @@ Use bare `bump` to search for the canonical bump. Quasar iterates from 255 downw
 
 ```rust
 #[derive(Accounts)]
-pub struct Make<'info> {
-    pub maker: &'info mut Signer,
+pub struct Make {
+    #[account(mut)]
+    pub maker: Signer,
     #[account(init, payer = maker, seeds = [b"escrow", maker], bump)]
-    pub escrow: &'info mut Account<Escrow>,
+    pub escrow: Account<Escrow>,
 }
 ```
 
@@ -22,16 +23,19 @@ Use `bump = expr` when you already have the bump stored in account data. This sk
 
 ```rust
 #[derive(Accounts)]
-pub struct Take<'info> {
+pub struct Take {
     #[account(
+        mut,
         has_one = maker,
         close = taker,
         seeds = [b"escrow", maker],
         bump = escrow.bump
     )]
-    pub escrow: &'info mut Account<Escrow>,
-    pub taker: &'info mut Signer,
-    pub maker: &'info mut UncheckedAccount,
+    pub escrow: Account<Escrow>,
+    #[account(mut)]
+    pub taker: Signer,
+    #[account(mut)]
+    pub maker: UncheckedAccount,
 }
 ```
 
@@ -48,7 +52,7 @@ Seeds can be:
 ```rust
 // Multiple seed types combined
 #[account(init, payer = maker, seeds = [b"escrow", maker, mint_a], bump)]
-pub escrow: &'info mut Account<Escrow>,
+pub escrow: Account<Escrow>,
 ```
 
 The Solana runtime enforces a maximum of 16 seeds per PDA (plus the bump seed, for 17 total). Each individual seed can be at most 32 bytes.
@@ -120,11 +124,11 @@ pub fn withdraw_tokens_and_close(&mut self, bumps: &TakeBumps) -> Result<(), Pro
     let seeds = bumps.escrow_seeds();
 
     self.token_program
-        .transfer(self.vault_ta_a, self.taker_ta_a, self.escrow, self.vault_ta_a.amount())
+        .transfer(&self.vault_ta_a, &self.taker_ta_a, &self.escrow, self.vault_ta_a.amount())
         .invoke_signed(&seeds)?;
 
     self.vault_ta_a
-        .close(self.token_program, self.taker, self.escrow)
+        .close(&self.token_program, &self.taker, &self.escrow)
         .invoke_signed(&seeds)
 }
 ```

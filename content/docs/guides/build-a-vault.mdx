@@ -114,18 +114,19 @@ Create `instructions/deposit.rs`:
 use quasar_lang::prelude::*;
 
 #[derive(Accounts)]
-pub struct Deposit<'info> {
-    pub user: &'info mut Signer,
+pub struct Deposit {
+    #[account(mut)]
+    pub user: Signer,
     #[account(mut, seeds = [b"vault", user], bump)]
-    pub vault: &'info mut UncheckedAccount,
-    pub system_program: &'info Program<System>,
+    pub vault: UncheckedAccount,
+    pub system_program: Program<System>,
 }
 
-impl<'info> Deposit<'info> {
+impl Deposit {
     #[inline(always)]
     pub fn deposit(&self, amount: u64) -> Result<(), ProgramError> {
         self.system_program
-            .transfer(self.user, self.vault, amount)
+            .transfer(&self.user, &self.vault, amount)
             .invoke()
     }
 }
@@ -135,9 +136,9 @@ impl<'info> Deposit<'info> {
 
 `#[derive(Accounts)]` generates deserialization and validation. Each field:
 
-- **`user: &'info mut Signer`** -- The wallet depositing SOL. `Signer` verifies the transaction signature. `mut` because its lamports decrease during transfer.
-- **`vault: &'info mut UncheckedAccount`** -- The vault PDA receiving SOL. `seeds = [b"vault", user]` verifies the PDA derivation. `bump` derives and stores the bump seed in `ctx.bumps`. We use `UncheckedAccount` because the vault holds only lamports -- no data to deserialize.
-- **`system_program: &'info Program<System>`** -- Required for the transfer CPI. `Program<System>` validates this is the system program.
+- **`user: Signer`** -- The wallet depositing SOL. `Signer` verifies the transaction signature. `#[account(mut)]` requires a writable account because its lamports decrease during transfer.
+- **`vault: UncheckedAccount`** -- The vault PDA receiving SOL. `seeds = [b"vault", user]` verifies the PDA derivation. `bump` derives and stores the bump seed in `ctx.bumps`. We use `UncheckedAccount` because the vault holds only lamports -- no data to deserialize.
+- **`system_program: Program<System>`** -- Required for the transfer CPI. `Program<System>` validates this is the system program.
 
 ### The handler
 
@@ -145,7 +146,7 @@ The `deposit` method performs a system program transfer from the user to the vau
 
 ```rust
 self.system_program
-    .transfer(self.user, self.vault, amount)
+    .transfer(&self.user, &self.vault, amount)
     .invoke()
 ```
 
@@ -161,13 +162,14 @@ Create `instructions/withdraw.rs`:
 use quasar_lang::prelude::*;
 
 #[derive(Accounts)]
-pub struct Withdraw<'info> {
-    pub user: &'info mut Signer,
+pub struct Withdraw {
+    #[account(mut)]
+    pub user: Signer,
     #[account(mut, seeds = [b"vault", user], bump)]
-    pub vault: &'info mut UncheckedAccount,
+    pub vault: UncheckedAccount,
 }
 
-impl<'info> Withdraw<'info> {
+impl Withdraw {
     #[inline(always)]
     pub fn withdraw(&self, amount: u64) -> Result<(), ProgramError> {
         let vault = self.vault.to_account_view();

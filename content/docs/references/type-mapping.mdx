@@ -294,7 +294,7 @@ Use `space = <expr>` on `init` to override computed space:
 
 ```rust
 #[account(init, payer = payer, space = 8 + 32 + 4 + name.len())]
-pub profile: &'info mut Account<Profile<'info>>,
+pub profile: Account<Profile<'info>>,
 ```
 
 ---

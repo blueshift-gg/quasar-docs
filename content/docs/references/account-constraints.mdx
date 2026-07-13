@@ -7,10 +7,10 @@ Account constraints are attributes on fields in a `#[derive(Accounts)]` struct. 
 
 ```rust
 #[derive(Accounts)]
-pub struct MyInstruction<'info> {
+pub struct MyInstruction {
     #[account(mut, has_one = authority)]
-    pub vault: &'info mut Account<Vault>,
-    pub authority: &'info Signer,
+    pub vault: Account<Vault>,
+    pub authority: Signer,
 }
 ```
 
@@ -44,7 +44,7 @@ Marks the account as mutable. Checks that the account was passed as writable.
 
 ```rust
 #[account(mut)]
-pub vault: &'info mut Account<Vault>,
+pub vault: Account<Vault>,
 ```
 
 ### `dup`
@@ -58,11 +58,11 @@ Allows this account to share the same address as a previous account in the struc
 
 ```rust
 #[derive(Accounts)]
-pub struct SelfTransfer<'info> {
+pub struct SelfTransfer {
     #[account(mut)]
-    pub source: &'info mut Account<TokenAccount>,
+    pub source: Account<TokenAccount>,
     #[account(mut, dup)]
-    pub destination: &'info mut Account<TokenAccount>,
+    pub destination: Account<TokenAccount>,
 }
 ```
 
@@ -80,7 +80,7 @@ use solana_address::address;
 const ADMIN: Address = address!("Admin111111111111111111111111111111111111111");
 
 #[account(address = ADMIN)]
-pub admin: &'info Signer,
+pub admin: Signer,
 ```
 
 ### `has_one = <field>`
@@ -101,11 +101,11 @@ pub struct Vault {
 }
 
 #[derive(Accounts)]
-pub struct Withdraw<'info> {
+pub struct Withdraw {
     #[account(mut, has_one = authority, has_one = mint)]
-    pub vault: &'info mut Account<Vault>,
-    pub authority: &'info Signer,
-    pub mint: &'info Account<Mint>,
+    pub vault: Account<Vault>,
+    pub authority: Signer,
+    pub mint: Account<Mint>,
 }
 ```
 
@@ -128,7 +128,7 @@ Evaluates a boolean expression. If it returns `false`, the instruction fails.
 #[account(
     constraint = vault.balance.get() >= amount @ MyError::InsufficientBalance
 )]
-pub vault: &'info Account<Vault>,
+pub vault: Account<Vault>,
 ```
 
 Multiple constraints can be specified:
@@ -156,12 +156,12 @@ Creates a new account via System program CPI. Derives size from `T::SPACE` (or `
 
 ```rust
 #[derive(Accounts)]
-pub struct CreateVault<'info> {
+pub struct CreateVault {
     #[account(init, payer = payer)]
-    pub vault: &'info mut Account<Vault>,
+    pub vault: Account<Vault>,
     #[account(mut)]
-    pub payer: &'info Signer,
-    pub system_program: &'info Program<System>,
+    pub payer: Signer,
+    pub system_program: Program<System>,
 }
 ```
 
@@ -169,7 +169,7 @@ For PDA accounts, combine `init` with `seeds` and `bump`:
 
 ```rust
 #[account(init, payer = payer, seeds = [b"vault", authority.address().as_ref()], bump)]
-pub vault: &'info mut Account<Vault>,
+pub vault: Account<Vault>,
 ```
 
 ### `init_if_needed`
@@ -183,7 +183,7 @@ Like `init`, but skips creation if the account already exists. Creates and initi
 
 ```rust
 #[account(init_if_needed, payer = payer, seeds = [b"profile", user.address().as_ref()], bump)]
-pub profile: &'info mut Account<Profile>,
+pub profile: Account<Profile>,
 ```
 
 ### `payer = <field>`
@@ -206,7 +206,7 @@ Overrides the default account size (`T::SPACE`). Use for dynamic accounts or whe
 
 ```rust
 #[account(init, payer = payer, space = 8 + 32 + 4 + name.len())]
-pub profile: &'info mut Account<Profile>,
+pub profile: Account<Profile>,
 ```
 
 ---
@@ -233,7 +233,7 @@ Seed expressions can be:
     seeds = [b"vault", authority.address().as_ref(), &vault_id.to_le_bytes()],
     bump
 )]
-pub vault: &'info Account<Vault>,
+pub vault: Account<Vault>,
 ```
 
 ### `bump`
@@ -271,11 +271,11 @@ Closes the account after the instruction executes. Zeros the discriminator, drai
 
 ```rust
 #[derive(Accounts)]
-pub struct CloseVault<'info> {
+pub struct CloseVault {
     #[account(mut, close = authority)]
-    pub vault: &'info mut Account<Vault>,
+    pub vault: Account<Vault>,
     #[account(mut)]
-    pub authority: &'info Signer,
+    pub authority: Signer,
 }
 ```
 
@@ -290,7 +290,7 @@ Resizes account data, adjusting lamports for rent exemption. Growing takes lampo
 
 ```rust
 #[account(mut, realloc = Vault::SPACE + extra_space, realloc::payer = payer)]
-pub vault: &'info mut Account<Vault>,
+pub vault: Account<Vault>,
 ```
 
 ### `realloc::payer = <field>`
@@ -328,15 +328,15 @@ Sets the authority for a newly initialized token account.
 
 ```rust
 #[derive(Accounts)]
-pub struct InitTokenAccount<'info> {
+pub struct InitTokenAccount {
     #[account(init, payer = payer, token::mint = mint, token::authority = authority)]
-    pub vault_token: &'info mut InterfaceAccount<Token>,
-    pub mint: &'info InterfaceAccount<Mint>,
-    pub authority: &'info Signer,
+    pub vault_token: InterfaceAccount<Token>,
+    pub mint: InterfaceAccount<Mint>,
+    pub authority: Signer,
     #[account(mut)]
-    pub payer: &'info Signer,
-    pub token_program: &'info Interface<TokenInterface>,
-    pub system_program: &'info Program<System>,
+    pub payer: Signer,
+    pub token_program: Interface<TokenInterface>,
+    pub system_program: Program<System>,
 }
 ```
 
@@ -372,7 +372,7 @@ Sets the freeze authority for a newly initialized mint.
 
 ```rust
 #[derive(Accounts)]
-pub struct CreateMint<'info> {
+pub struct CreateMint {
     #[account(
         init,
         payer = payer,
@@ -380,12 +380,12 @@ pub struct CreateMint<'info> {
         mint::authority = authority,
         mint::freeze_authority = authority
     )]
-    pub mint: &'info mut InterfaceAccount<Mint>,
+    pub mint: InterfaceAccount<Mint>,
     #[account(mut)]
-    pub payer: &'info Signer,
-    pub authority: &'info Signer,
-    pub token_program: &'info Interface<TokenInterface>,
-    pub system_program: &'info Program<System>,
+    pub payer: Signer,
+    pub authority: Signer,
+    pub token_program: Interface<TokenInterface>,
+    pub system_program: Program<System>,
 }
 ```
 
@@ -421,7 +421,7 @@ Token program for ATA derivation (needed for Token-2022).
 
 ```rust
 #[derive(Accounts)]
-pub struct InitAta<'info> {
+pub struct InitAta {
     #[account(
         init,
         payer = payer,
@@ -429,14 +429,14 @@ pub struct InitAta<'info> {
         associated_token::authority = owner,
         associated_token::token_program = token_program
     )]
-    pub ata: &'info mut InterfaceAccount<Token>,
-    pub mint: &'info InterfaceAccount<Mint>,
-    pub owner: &'info Signer,
+    pub ata: InterfaceAccount<Token>,
+    pub mint: InterfaceAccount<Mint>,
+    pub owner: Signer,
     #[account(mut)]
-    pub payer: &'info Signer,
-    pub token_program: &'info Interface<TokenInterface>,
-    pub associated_token_program: &'info Program<AssociatedTokenProgram>,
-    pub system_program: &'info Program<System>,
+    pub payer: Signer,
+    pub token_program: Interface<TokenInterface>,
+    pub associated_token_program: Program<AssociatedTokenProgram>,
+    pub system_program: Program<System>,
 }
 ```
 
@@ -473,14 +473,14 @@ Sets the maximum supply for a master edition. Use `0` for unlimited.
 ```rust
 #[derive(Accounts)]
 #[instruction(name: &[u8], symbol: &[u8], uri: &[u8])]
-pub struct CreateNft<'info> {
+pub struct CreateNft {
     #[account(
         init,
         payer = payer,
         mint::decimals = 0,
         mint::authority = authority
     )]
-    pub mint: &'info mut InterfaceAccount<Mint>,
+    pub mint: InterfaceAccount<Mint>,
     #[account(
         init,
         payer = payer,
@@ -490,20 +490,20 @@ pub struct CreateNft<'info> {
         metadata::seller_fee_basis_points = 500,
         metadata::is_mutable = true
     )]
-    pub metadata: &'info mut Account<MetadataAccount>,
+    pub metadata: Account<MetadataAccount>,
     #[account(
         init,
         payer = payer,
         master_edition::max_supply = 0
     )]
-    pub master_edition: &'info mut Account<MasterEditionAccount>,
+    pub master_edition: Account<MasterEditionAccount>,
     #[account(mut)]
-    pub payer: &'info Signer,
-    pub authority: &'info Signer,
-    pub token_program: &'info Interface<TokenInterface>,
-    pub system_program: &'info Program<System>,
-    pub metadata_program: &'info Program<MetadataProgram>,
-    pub rent: &'info Sysvar<Rent>,
+    pub payer: Signer,
+    pub authority: Signer,
+    pub token_program: Interface<TokenInterface>,
+    pub system_program: Program<System>,
+    pub metadata_program: Program<MetadataProgram>,
+    pub rent: Sysvar<Rent>,
 }
 ```
 

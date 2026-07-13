@@ -76,12 +76,13 @@ Creates `src/instructions/withdraw.rs`:
 use quasar_lang::prelude::*;
 
 #[derive(Accounts)]
-pub struct Withdraw<'info> {
-    pub payer: &'info mut Signer,
-    pub system_program: &'info Program<System>,
+pub struct Withdraw {
+    #[account(mut)]
+    pub payer: Signer,
+    pub system_program: Program<System>,
 }
 
-impl<'info> Withdraw<'info> {
+impl Withdraw {
     #[inline(always)]
     pub fn withdraw(&self) -> Result<(), ProgramError> {
         Ok(())
