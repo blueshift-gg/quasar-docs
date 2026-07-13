@@ -266,13 +266,13 @@ pub maker: Signer,
 pub mint: Account<Mint>,
 ```
 
-### `constraint`
+### `constraints(...)`
 
 Arbitrary boolean expression evaluated after the account is constructed. If it returns `false`, the instruction fails. Useful for business logic checks that don't fit the other constraint types:
 
 ```rust
-#[account(constraint = escrow.receive > 0)]    // reject zero-value escrows
-#[account(constraint = clock.slot.get() > vault.unlock_slot.get())]  // timelock
+#[account(constraints(escrow.receive > 0))]    // reject zero-value escrows
+#[account(constraints(clock.slot.get() > vault.unlock_slot.get()))]  // timelock
 ```
 
 ### `address`
@@ -288,13 +288,13 @@ pub admin: Signer,
 
 ### Custom errors with `@`
 
-`has_one`, `constraint`, and `address` all accept `@ ErrorVariant` to replace the default error with your own. This makes error messages much more useful for debugging and for clients:
+`has_one`, `constraints`, and `address` all accept `@ ErrorVariant` to replace the default error with your own. This makes error messages much more useful for debugging and for clients:
 
 ```rust
 #[account(
     mut,
     has_one(maker) @ MyError::InvalidMaker,
-    constraint = escrow.receive > 0 @ MyError::ZeroReceiveAmount,
+    constraints(escrow.receive > 0) @ MyError::ZeroReceiveAmount,
     address = ADMIN @ MyError::Unauthorized,
 )]
 pub escrow: Account<Escrow>,
@@ -380,7 +380,7 @@ When an instruction is invoked:
 1. **Header validation** -- signer, writable, executable, and duplicate flags are checked against compile-time expectations in a single constant comparison per account.
 2. **Typed construction** -- each field is constructed from its `AccountView`.
 3. **PDA verification and initialization** -- typed `address = Type::seeds(...)` constraints are verified and initializing accounts are created.
-4. **Constraint evaluation** -- `has_one`, `constraint`, and `address` checks run in declaration order.
+4. **Constraint evaluation** -- `has_one`, `constraints`, and `address` checks run in declaration order.
 5. **Epilogue** -- after the handler returns, `close` operations execute.
 
 ## Next Steps
