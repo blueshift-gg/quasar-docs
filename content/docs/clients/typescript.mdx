@@ -5,14 +5,18 @@ description: Auto-generated TypeScript clients for interacting with Quasar progr
 
 ![Typescript Client](/images/typescript-client.webp)
 
-`quasar idl` generates two TypeScript clients from your IDL: one for `@solana/web3.js` v2 and one for `@solana/kit`. Both include typed instruction builders, account decoders, event parsers, and PDA derivation helpers.
+Quasar generates two TypeScript clients from the same IDL: one for `@solana/web3.js` v2 and one for `@solana/kit`. Both include typed instruction builders, account decoders, event parsers, and PDA derivation helpers.
 
 ## Generating
 
 ```bash
-quasar idl          # IDL + clients only
-quasar build        # build + IDL + clients
+quasar build # Build + IDL + Rust client + languages in [clients].languages
+
+quasar idl .
+quasar client target/idl/my_program.json --lang typescript
 ```
+
+The second form generates the IDL and standalone Rust client first, then generates TypeScript from that IDL without compiling the SBF program.
 
 Output:
 

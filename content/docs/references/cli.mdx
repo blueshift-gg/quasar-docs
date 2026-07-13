@@ -274,7 +274,7 @@ quasar clean
 
 ### `quasar idl`
 
-Generate the IDL for a program crate. Produces JSON, a TypeScript client, and a Rust client module.
+Generate the IDL JSON and standalone Rust client for a program crate.
 
 ```
 quasar idl <PATH>
@@ -289,6 +289,28 @@ quasar idl <PATH>
 ```bash
 quasar idl .                   # Current directory
 quasar idl programs/my-program # Specific program crate
+```
+
+---
+
+### `quasar client`
+
+Generate language clients from an existing IDL file.
+
+```
+quasar client <IDL> [--lang <LANGUAGES>]
+```
+
+| Argument or flag | Description |
+|------------------|-------------|
+| `IDL` | Path to a generated IDL JSON file |
+| `--lang <LANGUAGES>` | Comma-separated subset of `typescript`, `python`, `golang`, or `c`; omit it to generate all four |
+
+**Examples:**
+
+```bash
+quasar client target/idl/my_program.json --lang typescript
+quasar client target/idl/my_program.json --lang python,golang
 ```
 
 ---

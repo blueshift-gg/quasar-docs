@@ -211,11 +211,6 @@ target/
   idl/
     my_program.json
   client/
-    typescript/
-      my_program/
-        web3.ts                      # @solana/web3.js v2
-        kit.ts                       # @solana/kit
-        package.json
     rust/
       my-program-client/
         Cargo.toml
@@ -224,7 +219,13 @@ target/
 
 ### TypeScript clients
 
-Two flavors generated from the same IDL -- one for `@solana/web3.js` v2, one for `@solana/kit`. Both include typed instruction builders, account/event type definitions, discriminator constants, and codec functions.
+`quasar build` generates the languages listed in `[clients].languages`. To generate a client explicitly from an existing IDL, run:
+
+```bash
+quasar client target/idl/my_program.json --lang typescript
+```
+
+The TypeScript output contains two flavors from the same IDL: one for `@solana/web3.js` v2 and one for `@solana/kit`. Both include typed instruction builders, account/event type definitions, discriminator constants, and codec functions.
 
 ### Rust client
 
