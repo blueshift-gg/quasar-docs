@@ -64,7 +64,7 @@ src/
 ```rust
 use quasar_lang::prelude::*;
 
-#[account(discriminator = 1)]
+#[account(discriminator = 1, set_inner)]
 #[seeds(b"escrow", maker: Address)]
 pub struct Escrow {
     pub maker: Address,
@@ -180,7 +180,7 @@ Creates the escrow account, emits an event, and deposits tokens. `instructions/m
 
 ```rust
 use {
-    crate::{events::MakeEvent, state::Escrow},
+    crate::{events::MakeEvent, state::{Escrow, EscrowInner}},
     quasar_lang::prelude::*,
     quasar_spl::{accounts::token, Mint, Token, TokenCpi, TokenProgram},
 };
@@ -229,19 +229,19 @@ pub struct Make {
 
 ```rust
 pub fn make_escrow(&mut self, receive: u64, bumps: &MakeBumps) -> Result<(), ProgramError> {
-    self.escrow.set_inner(
-        *self.maker.address(),
-        *self.mint_a.address(),
-        *self.mint_b.address(),
-        *self.maker_ta_b.address(),
+    self.escrow.set_inner(EscrowInner {
+        maker: *self.maker.address(),
+        mint_a: *self.mint_a.address(),
+        mint_b: *self.mint_b.address(),
+        maker_ta_b: *self.maker_ta_b.address(),
         receive,
-        bumps.escrow,
-    );
+        bump: bumps.escrow,
+    });
     Ok(())
 }
 ```
 
-`set_inner` writes all fields to the account buffer. `MakeBumps` is auto-generated and contains bump seeds for every PDA in the struct.
+The `set_inner` account opt-in generates `EscrowInner` with the native field types. Passing that value writes every field to the account buffer. `MakeBumps` is auto-generated and contains bump seeds for every PDA in the struct.
 
 `emit_event` logs the event:
 
