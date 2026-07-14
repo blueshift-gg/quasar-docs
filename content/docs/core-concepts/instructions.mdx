@@ -169,7 +169,7 @@ The framework runs `close` operations before setting return data, so closed acco
 
 ## Epilogue
 
-After the handler returns `Ok(())`, the framework runs the epilogue -- `close` operations execute for any accounts marked with `close = destination`. If the handler returns an error, the epilogue is skipped and the entire transaction rolls back.
+After the handler returns `Ok(())`, the framework runs the epilogue -- `close` operations execute for any accounts marked with `close(dest = destination)`. If the handler returns an error, the epilogue is skipped and the entire transaction rolls back.
 
 ## Next Steps
 

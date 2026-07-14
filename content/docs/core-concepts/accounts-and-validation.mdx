@@ -309,7 +309,7 @@ Closes an account after the instruction handler returns. Zeros the discriminator
 Because `close` runs in the epilogue (after your handler), you can still read the account's data during execution:
 
 ```rust
-#[account(mut, close = taker, address = Escrow::seeds(maker.address()))]
+#[account(mut, close(dest = taker), address = Escrow::seeds(maker.address()))]
 pub escrow: Account<Escrow>,
 ```
 

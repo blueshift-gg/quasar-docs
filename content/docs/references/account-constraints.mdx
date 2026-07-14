@@ -279,19 +279,19 @@ Each typed PDA field also generates a `<field>_signer` method for CPI signing.
 
 ## Lifecycle
 
-### `close = <destination>`
+### `close(dest = <destination>)`
 
 Closes the account after the instruction executes. Zeros the discriminator, drains lamports to the destination, and reassigns ownership to the System program.
 
 | | |
 |---|---|
-| **Syntax** | `#[account(mut, close = destination_field)]` |
+| **Syntax** | `#[account(mut, close(dest = destination_field))]` |
 | **Requires** | `mut` on this field, destination field must be writable |
 
 ```rust
 #[derive(Accounts)]
 pub struct CloseVault {
-    #[account(mut, close = authority)]
+    #[account(mut, close(dest = authority))]
     pub vault: Account<Vault>,
     #[account(mut)]
     pub authority: Signer,
@@ -542,7 +542,7 @@ pub struct CreateNft {
 | `payer` | `#[account(payer = field)]` | -- |
 | `space` | `#[account(space = EXPR)]` | -- |
 | typed PDA | `#[seeds(...)]` plus `#[account(address = Type::seeds(...))]` | `InvalidPda` |
-| `close` | `#[account(close = dest)]` | -- |
+| `close` | `#[account(close(dest = field))]` | -- |
 | `realloc` | `#[account(realloc = EXPR)]` | `InvalidRealloc` |
 | `realloc::payer` | `#[account(realloc::payer = field)]` | -- |
 | `token::mint` | `#[account(init, token::mint = field)]` | -- |
