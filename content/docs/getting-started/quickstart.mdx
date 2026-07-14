@@ -66,7 +66,11 @@ quasar build --debug        # with debug symbols
 quasar test                 # builds then runs the test suite
 quasar test -f test_init    # filter by name
 quasar test --features debug
+```
 
+The packaged release rehearsal runs the non-interactive minimal init, add, discriminator lock, release build, and three test commands shown above. Deployment is intentionally excluded because it requires a funded keypair and an external cluster.
+
+```bash
 quasar deploy --url devnet  # builds then deploys
 quasar deploy --url devnet --skip-build --keypair ./payer.json
 ```
