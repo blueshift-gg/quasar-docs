@@ -10,7 +10,7 @@ The `#[account]` macro generates a zero-copy companion struct, a view type that 
 Given this account:
 
 ```rust
-#[account(discriminator = 1)]
+#[account(discriminator = 1, set_inner)]
 pub struct Escrow {
     pub maker: Address,
     pub mint_a: Address,
@@ -48,7 +48,7 @@ impl Deref for Escrow {
 }
 ```
 
-**3. Trait impls** -- `Discriminator` (the `[1]` byte), `Space` (total account size), `Owner` (your program's `crate::ID`), and `set_inner()` for writing all fields at once.
+**3. Trait impls and the opted-in initializer** -- `Discriminator` (the `[1]` byte), `Space` (total account size), `Owner` (your program's `crate::ID`), plus `EscrowInner` and `set_inner()` because the account requested them.
 
 ## Memory layout
 
@@ -79,17 +79,17 @@ let maker: &Address = &escrow.maker;
 let amount: PodU64 = escrow.receive;
 ```
 
-Writing with `set_inner()` accepts native types and converts to Pod internally:
+Writing with `set_inner()` takes the generated inner value. Its fields use the native types from the account declaration and are converted to Pod internally:
 
 ```rust
-self.escrow.set_inner(
-    *self.maker.address(),    // Address
-    *self.mint_a.address(),   // Address
-    *self.mint_b.address(),   // Address
-    *self.maker_ta_b.address(), // Address
-    receive,                   // u64 -> PodU64 internally
-    bumps.escrow,             // u8
-);
+self.escrow.set_inner(EscrowInner {
+    maker: *self.maker.address(),       // Address
+    mint_a: *self.mint_a.address(),     // Address
+    mint_b: *self.mint_b.address(),     // Address
+    maker_ta_b: *self.maker_ta_b.address(), // Address
+    receive,                            // u64 -> PodU64 internally
+    bump: bumps.escrow,                 // u8
+});
 ```
 
 Individual field writes go through `DerefMut`, directly to the account data buffer:

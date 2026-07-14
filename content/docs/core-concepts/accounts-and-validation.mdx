@@ -136,7 +136,7 @@ Arithmetic uses wrapping semantics in release builds (saves CUs) and panics on o
 For fixed-size fields:
 
 ```rust
-#[account(discriminator = 1)]
+#[account(discriminator = 1, set_inner)]
 #[seeds(b"escrow", maker: Address)]
 pub struct Escrow {
     pub maker: Address,
@@ -152,19 +152,19 @@ The macro generates:
 - A companion `EscrowZc` struct with Pod fields and `#[repr(C)]` layout (alignment 1)
 - `Deref`/`DerefMut` impls that pointer-cast directly into account data
 - `Discriminator`, `Owner`, `Space` trait impls
-- A `set_inner()` method that takes the native types you wrote
+- An `EscrowInner` value and `set_inner()` method because the account opted into `set_inner`
 
-`set_inner()` accepts the types you declared (`Address`, `u64`, `u8`) and converts to Pod internally:
+The generated inner value keeps the native field types you declared and `set_inner()` converts them to Pod internally:
 
 ```rust
-self.escrow.set_inner(
-    *self.maker.address(),    // Address
-    *self.mint_a.address(),   // Address
-    *self.mint_b.address(),   // Address
-    *self.maker_ta_b.address(), // Address
-    receive,                   // u64 -> PodU64 internally
-    bumps.escrow,             // u8
-);
+self.escrow.set_inner(EscrowInner {
+    maker: *self.maker.address(),       // Address
+    mint_a: *self.mint_a.address(),     // Address
+    mint_b: *self.mint_b.address(),     // Address
+    maker_ta_b: *self.maker_ta_b.address(), // Address
+    receive,                            // u64 -> PodU64 internally
+    bump: bumps.escrow,                 // u8
+});
 ```
 
 ### Dynamic accounts

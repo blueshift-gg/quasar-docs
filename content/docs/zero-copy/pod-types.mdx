@@ -89,4 +89,4 @@ let value: u64 = amount.get();             // read without consuming
 
 ## When you actually see Pod types
 
-Almost never. The `#[account]` macro handles the mapping, `set_inner()` accepts native types and converts internally, and operators let you mix Pod and native values freely. The only time you deal with Pod types explicitly is when building custom `#[repr(C)]` structs outside the `#[account]` macro.
+Almost never. The `#[account(..., set_inner)]` opt-in generates an inner value with native field types, `set_inner()` converts those fields internally, and operators let you mix Pod and native values freely. The only time you deal with Pod types explicitly is when building custom `#[repr(C)]` structs outside the `#[account]` macro.

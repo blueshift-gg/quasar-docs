@@ -109,11 +109,11 @@ The instruction handler receives it as `ctx.bumps`:
 
 ```rust
 pub fn make_escrow(&mut self, receive: u64, bumps: &MakeBumps) -> Result<(), ProgramError> {
-    self.escrow.set_inner(
-        *self.maker.address(),
+    self.escrow.set_inner(EscrowInner {
+        maker: *self.maker.address(),
         receive,
-        bumps.escrow,
-    );
+        bump: bumps.escrow,
+    });
     Ok(())
 }
 ```
