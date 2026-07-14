@@ -119,6 +119,7 @@ quasar build [OPTIONS]
 | Flag | Description |
 |------|-------------|
 | `--debug` | Emit debug symbols (required for profiling and source-interleaved dump) |
+| `--verbose` | Stream the underlying build command output |
 | `-w, --watch` | Watch `src/` for changes and rebuild automatically |
 | `--features <FEATURES>` | Cargo features to enable (passed through to the build command) |
 
@@ -133,6 +134,7 @@ On success, prints the binary size and delta from the previous build:
 ```bash
 quasar build                  # Release build
 quasar build --debug          # Debug build with symbols
+quasar build --verbose        # Stream compiler output
 quasar build --watch          # Auto-rebuild on changes
 quasar build --features "devnet"
 ```
