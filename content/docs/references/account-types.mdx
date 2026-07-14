@@ -118,7 +118,7 @@ pub struct Signer {
 pub struct Initialize {
     #[account(mut)]
     pub payer: Signer,
-    pub system_program: Program<System>,
+    pub system_program: Program<SystemProgram>,
 }
 ```
 
@@ -175,7 +175,7 @@ pub struct TransferSol {
     pub from: Signer,
     #[account(mut)]
     pub to: SystemAccount,
-    pub system_program: Program<System>,
+    pub system_program: Program<SystemProgram>,
 }
 ```
 
@@ -206,7 +206,7 @@ pub struct Program<T: Id> {
 pub struct CreateAccount {
     #[account(mut)]
     pub payer: Signer,
-    pub system_program: Program<System>,
+    pub system_program: Program<SystemProgram>,
 }
 ```
 
@@ -216,7 +216,7 @@ pub struct CreateAccount {
 |--------|-------------|
 | `emit_event(event, event_authority, bump)` | Emit an event via self-CPI to this program |
 
-Common program marker types: `System`, `Token`, `Token2022`, `AssociatedTokenProgram`, `MetadataProgram`.
+Common program marker types: `SystemProgram`, `TokenProgram`, `Token2022Program`, `AssociatedTokenProgram`, `MetadataProgram`.
 
 ---
 
@@ -241,7 +241,7 @@ pub struct Interface<T: ProgramInterface> {
 **Example:**
 
 ```rust
-use quasar_spl::interface::TokenInterface;
+use quasar_spl::TokenInterface;
 
 #[derive(Accounts)]
 pub struct Transfer {
@@ -280,7 +280,7 @@ pub struct InterfaceAccount<T> {
 **Example:**
 
 ```rust
-use quasar_spl::{token::Token, mint::Mint};
+use quasar_spl::{Mint, Token};
 
 #[derive(Accounts)]
 pub struct Deposit {

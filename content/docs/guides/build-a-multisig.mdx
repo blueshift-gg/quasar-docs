@@ -173,7 +173,7 @@ pub struct Create<\'info> {
     #[account(init, mut, payer = creator, seeds = [b"multisig", creator], bump)]
     pub config: Account<MultisigConfig<\'info>>,
     pub rent: Sysvar<Rent>,
-    pub system_program: Program<System>,
+    pub system_program: Program<SystemProgram>,
 }
 ```
 
@@ -247,7 +247,7 @@ pub struct Deposit<\'info> {
     pub config: Account<MultisigConfig<\'info>>,
     #[account(mut, seeds = [b"vault", config], bump)]
     pub vault: UncheckedAccount,
-    pub system_program: Program<System>,
+    pub system_program: Program<SystemProgram>,
 }
 
 impl<\'info> Deposit<\'info> {
@@ -289,7 +289,7 @@ pub struct ExecuteTransfer<\'info> {
     pub vault: UncheckedAccount,
     #[account(mut)]
     pub recipient: UncheckedAccount,
-    pub system_program: Program<System>,
+    pub system_program: Program<SystemProgram>,
 }
 ```
 
@@ -354,7 +354,7 @@ pub struct SetLabel<\'info> {
         bump = config.bump
     )]
     pub config: Account<MultisigConfig<\'info>>,
-    pub system_program: Program<System>,
+    pub system_program: Program<SystemProgram>,
 }
 
 impl<\'info> SetLabel<\'info> {

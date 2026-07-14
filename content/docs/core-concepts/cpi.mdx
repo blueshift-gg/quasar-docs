@@ -24,7 +24,7 @@ Every CPI helper returns a `CpiCall<'a, ACCTS, DATA>` where account count and da
 
 ## System Program
 
-Methods on `Program<System>` accept typed accounts directly:
+Methods on `Program<SystemProgram>` accept typed accounts directly:
 
 ```rust
 self.system_program.transfer(&self.user, &self.vault, amount).invoke()?;
@@ -40,7 +40,7 @@ Also available as free functions in `quasar_lang::cpi::system` when you're worki
 
 ## Token Program
 
-The `quasar-spl` crate provides the same method-style CPI on `Program<Token>`:
+The `quasar-spl` crate provides the same method-style CPI on `Program<TokenProgram>`:
 
 ```rust
 // Transfer tokens

@@ -10,7 +10,7 @@ Token-2022 (Token Extensions) is a superset of SPL Token with the same base acco
 `Token2022` and `Mint2022` are identical to `Token` and `Mint` but validate that the owner is the Token-2022 program:
 
 ```rust
-use quasar_spl::{Token2022, Mint2022, TokenCpi};
+use quasar_spl::{Mint2022, Token2022, Token2022Program, TokenCpi};
 
 #[derive(Accounts)]
 pub struct Transfer2022 {
@@ -19,7 +19,7 @@ pub struct Transfer2022 {
     pub from: Account<Token2022>,
     #[account(mut)]
     pub to: Account<Token2022>,
-    pub token_program: Program<Token2022>,
+    pub token_program: Program<Token2022Program>,
 }
 ```
 
@@ -63,8 +63,8 @@ pub mint: InterfaceAccount<Mint>,
 
 | Scenario | Account type | Program type |
 |----------|-------------|-------------|
-| SPL Token only | `Account<Token>` / `Account<Mint>` | `Program<Token>` |
-| Token-2022 only | `Account<Token2022>` / `Account<Mint2022>` | `Program<Token2022>` |
+| SPL Token only | `Account<Token>` / `Account<Mint>` | `Program<TokenProgram>` |
+| Token-2022 only | `Account<Token2022>` / `Account<Mint2022>` | `Program<Token2022Program>` |
 | Both programs | `InterfaceAccount<Token>` / `InterfaceAccount<Mint>` | `Interface<TokenInterface>` |
 
 If you have no reason to restrict to one program, prefer the interface types.
@@ -83,7 +83,7 @@ pub struct InitVault {
     pub mint: InterfaceAccount<Mint>,
     pub authority: Signer,
     pub token_program: Interface<TokenInterface>,
-    pub system_program: Program<System>,
+    pub system_program: Program<SystemProgram>,
 }
 ```
 
@@ -95,7 +95,7 @@ Swap the types -- no business logic changes needed:
 // Before: SPL Token only
 #[account(mut)]
 pub from: Account<Token>,
-pub token_program: Program<Token>,
+pub token_program: Program<TokenProgram>,
 
 // After: both programs
 #[account(mut)]

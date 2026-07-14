@@ -161,7 +161,7 @@ pub struct CreateVault {
     pub vault: Account<Vault>,
     #[account(mut)]
     pub payer: Signer,
-    pub system_program: Program<System>,
+    pub system_program: Program<SystemProgram>,
 }
 ```
 
@@ -336,7 +336,7 @@ pub struct InitTokenAccount {
     #[account(mut)]
     pub payer: Signer,
     pub token_program: Interface<TokenInterface>,
-    pub system_program: Program<System>,
+    pub system_program: Program<SystemProgram>,
 }
 ```
 
@@ -385,7 +385,7 @@ pub struct CreateMint {
     pub payer: Signer,
     pub authority: Signer,
     pub token_program: Interface<TokenInterface>,
-    pub system_program: Program<System>,
+    pub system_program: Program<SystemProgram>,
 }
 ```
 
@@ -436,7 +436,7 @@ pub struct InitAta {
     pub payer: Signer,
     pub token_program: Interface<TokenInterface>,
     pub associated_token_program: Program<AssociatedTokenProgram>,
-    pub system_program: Program<System>,
+    pub system_program: Program<SystemProgram>,
 }
 ```
 
@@ -501,7 +501,7 @@ pub struct CreateNft {
     pub payer: Signer,
     pub authority: Signer,
     pub token_program: Interface<TokenInterface>,
-    pub system_program: Program<System>,
+    pub system_program: Program<SystemProgram>,
     pub metadata_program: Program<MetadataProgram>,
     pub rent: Sysvar<Rent>,
 }

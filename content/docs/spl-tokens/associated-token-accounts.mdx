@@ -10,18 +10,18 @@ ATAs are deterministic token accounts derived from a wallet address and a mint (
 Use `init` with `associated_token::mint` and `associated_token::authority` to create an ATA. This invokes the ATA program's `Create` instruction via CPI:
 
 ```rust
-use quasar_spl::{AssociatedToken, AssociatedTokenProgram, Mint, Token};
+use quasar_spl::{AssociatedTokenProgram, Mint, Token, TokenProgram};
 
 #[derive(Accounts)]
 pub struct InitAta {
     #[account(mut)]
     pub payer: Signer,
     #[account(init, associated_token::mint = mint, associated_token::authority = wallet)]
-    pub ata: Account<AssociatedToken>,
+    pub ata: Account<Token>,
     pub wallet: Signer,
     pub mint: Account<Mint>,
-    pub token_program: Program<Token>,
-    pub system_program: Program<System>,
+    pub token_program: Program<TokenProgram>,
+    pub system_program: Program<SystemProgram>,
     pub ata_program: Program<AssociatedTokenProgram>,
 }
 ```
@@ -30,7 +30,7 @@ Use `init_if_needed` to create only if the account doesn't exist yet. If it does
 
 ```rust
 #[account(init_if_needed, associated_token::mint = mint, associated_token::authority = wallet)]
-pub ata: Account<AssociatedToken>,
+pub ata: Account<Token>,
 ```
 
 ### associated_token vs token attributes
@@ -43,7 +43,7 @@ To validate an existing ATA without creating it, use `associated_token::*` witho
 
 ```rust
 #[account(associated_token::mint = mint, associated_token::authority = wallet)]
-pub ata: Account<AssociatedToken>,
+pub ata: Account<Token>,
 ```
 
 This derives the expected address, checks that the account matches, and validates the token data.
