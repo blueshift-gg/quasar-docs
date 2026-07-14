@@ -35,6 +35,7 @@ Without `--yes`, the command is interactive. A positional name becomes the defau
 | `--ts-sdk <SDK>` | Solana SDK when the test language is `typescript`: `kit` or `web3.js` |
 | `--template <TEMPLATE>` | Project template: `minimal` (single instruction) or `full` (state, events, instruction files) |
 | `--toolchain <TOOLCHAIN>` | Build toolchain: `solana` or `upstream` |
+| `--verbose` | Show each scaffold step as it runs |
 
 Generates a project with `Cargo.toml`, `Quasar.toml`, source files, test scaffolding, program keypair, and git setup. Preferences are saved to `~/.quasar/config.toml`.
 
@@ -45,6 +46,7 @@ quasar init                        # Interactive wizard
 quasar init my-program             # Default the name; prompt for remaining choices
 quasar init my-program --yes       # Use saved or built-in defaults without prompts
 quasar init . --toolchain upstream # Scaffold into current directory
+quasar init my-app --verbose       # Show each generated step
 quasar init my-app --test-language rust --rust-framework mollusk --template full
 quasar init my-app --test-language typescript --ts-sdk kit --template full
 ```
@@ -249,7 +251,9 @@ quasar dump target/deploy/my_program.so  # Specific ELF
 
 ### `quasar deploy`
 
-Deploy the program to a Solana cluster. Uses the cluster and wallet from your Solana CLI config (`solana config get`).
+Build and deploy the program to a Solana cluster. Unless a flag overrides it,
+deployment uses the cluster and payer from your Solana CLI config (`solana
+config get`).
 
 ```
 quasar deploy [OPTIONS]
@@ -259,14 +263,18 @@ quasar deploy [OPTIONS]
 |------|-------------|
 | `--program-keypair <KEYPAIR>` | Path to the program keypair (default: `target/deploy/<name>-keypair.json`) |
 | `--upgrade-authority <KEYPAIR>` | Upgrade authority keypair (default: Solana CLI default keypair) |
+| `-k, --keypair <KEYPAIR>` | Payer keypair (default: Solana CLI default keypair) |
+| `-u, --url <URL>` | Cluster moniker or RPC URL (default: Solana CLI configured cluster) |
+| `--skip-build` | Deploy the existing binary without running `quasar build` first |
 
-The program binary is auto-detected from `target/deploy/`.
+The program binary is auto-detected from `target/deploy/` after the build step.
 
 **Examples:**
 
 ```bash
-quasar build && quasar deploy                     # Build and deploy
-quasar deploy                                     # Deploy existing binary
+quasar deploy                                     # Build, then deploy with Solana CLI defaults
+quasar deploy --skip-build                        # Deploy the existing binary
+quasar deploy --url devnet --keypair ~/.config/solana/id.json
 quasar deploy --program-keypair ./my-key.json     # Custom program keypair
 quasar deploy --upgrade-authority ./authority.json # Custom upgrade authority
 ```
@@ -275,31 +283,49 @@ quasar deploy --upgrade-authority ./authority.json # Custom upgrade authority
 
 ### `quasar clean`
 
-Remove build artifacts from `target/deploy/`, `target/profile/`, `target/idl/`, and `target/client/`.
+Remove generated deploy, profile, IDL, and client artifacts. Files ending in
+`-keypair.json` are preserved in `target/deploy/` because replacing one changes
+the program address.
 
 ```
-quasar clean
+quasar clean [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `-a, --all` | Also run `cargo clean` to remove the complete Cargo build output |
+
+```bash
+quasar clean       # Remove Quasar-generated artifacts
+quasar clean --all # Also remove Cargo build output
 ```
 
 ---
 
 ### `quasar idl`
 
-Generate the IDL JSON and standalone Rust client for a program crate.
+Generate an IDL and Rust client from a program crate, or verify the hashes stored
+in an existing Quasar IDL.
 
 ```
 quasar idl <PATH>
+quasar idl verify <IDL>
 ```
 
-| Argument | Description |
-|----------|-------------|
+| Argument or subcommand | Description |
+|------------------------|-------------|
 | `PATH` | Path to the program crate directory |
+| `verify <IDL>` | Recompute `hashes.idl` and `hashes.abi` and compare them with the values stored in the IDL file |
 
-**Example:**
+Verification detects content or ABI drift after the hashes were created. It
+does not prove who produced the file or that the program is deployed on-chain.
+
+**Examples:**
 
 ```bash
-quasar idl .                   # Current directory
-quasar idl programs/my-program # Specific program crate
+quasar idl .                            # Generate from the current crate
+quasar idl programs/my-program          # Generate from a specific crate
+quasar idl verify target/idl/program.json # Check stored IDL and ABI hashes
 ```
 
 ---
@@ -315,13 +341,67 @@ quasar client <IDL> [--lang <LANGUAGES>]
 | Argument or flag | Description |
 |------------------|-------------|
 | `IDL` | Path to a generated IDL JSON file |
-| `--lang <LANGUAGES>` | Comma-separated subset of `typescript`, `python`, `golang`, or `c`; omit it to generate all four |
+| `--lang <LANGUAGES>` | Comma-separated subset of `typescript`, `python`, or `golang`; omit it to generate all three |
 
 **Examples:**
 
 ```bash
 quasar client target/idl/my_program.json --lang typescript
 quasar client target/idl/my_program.json --lang python,golang
+```
+
+---
+
+### `quasar lint`
+
+Audit the current program surface for pre-deploy and upgrade-safety findings.
+When `quasar.lock.json` exists, lint also compares the generated IDL with the
+recorded surface.
+
+```
+quasar lint [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--update-lock` | Write the current program surface to `quasar.lock.json` after a successful lint |
+| `--no-diff` | Run current-surface rules without comparing against `quasar.lock.json` |
+| `--strict` | Treat warning and informational findings as failures |
+
+The lockfile records an API surface for later comparison; it is not a program
+binary, deployment record, or security proof.
+
+```bash
+quasar lint               # Check current rules and any recorded surface
+quasar lint --update-lock # Record the reviewed surface
+quasar lint --no-diff     # Ignore the existing surface for this run
+quasar lint --strict      # Fail on every reported severity
+```
+
+---
+
+### `quasar keys`
+
+Inspect or manage the program keypair under `target/deploy/`.
+
+```
+quasar keys <SUBCOMMAND>
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `list` | Print the program ID derived from the current keypair file |
+| `sync` | Update `declare_id!()` in `src/lib.rs` to match the current keypair |
+| `new [--force]` | Generate a new keypair and sync `declare_id!()`; refuse to replace an existing keypair unless `--force` is present |
+
+`quasar keys new --force` changes the program address. Use it only when replacing
+the current program identity is intentional.
+
+```bash
+quasar keys list
+quasar keys sync
+quasar keys new
+quasar keys new --force
 ```
 
 ---
