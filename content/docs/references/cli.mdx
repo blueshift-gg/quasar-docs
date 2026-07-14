@@ -23,12 +23,12 @@ Scaffold a new Quasar project.
 quasar init [NAME] [OPTIONS]
 ```
 
-With a name, uses saved defaults and skips prompts. Without a name, launches an interactive wizard.
+Without `--yes`, the command is interactive. A positional name becomes the default value for the project-name prompt. With `--yes`, a name is required and the CLI uses explicit flags followed by saved or built-in defaults for unspecified choices.
 
 | Flag | Description |
 |------|-------------|
 | `NAME` | Project name (becomes crate name and `Quasar.toml` project name). Use `.` to scaffold into the current directory. |
-| `-y, --yes` | Skip prompts and use saved defaults |
+| `-y, --yes` | Skip all prompts and use explicit flags, then saved or built-in defaults |
 | `--no-git` | Skip `git init` |
 | `--test-language <LANGUAGE>` | Test language: `none`, `rust`, or `typescript` |
 | `--rust-framework <FRAMEWORK>` | Rust framework when the test language is `rust`: `quasar-svm` or `mollusk` |
@@ -42,7 +42,8 @@ Generates a project with `Cargo.toml`, `Quasar.toml`, source files, test scaffol
 
 ```bash
 quasar init                        # Interactive wizard
-quasar init my-program             # Use saved defaults, no prompts
+quasar init my-program             # Default the name; prompt for remaining choices
+quasar init my-program --yes       # Use saved or built-in defaults without prompts
 quasar init . --toolchain upstream # Scaffold into current directory
 quasar init my-app --test-language rust --rust-framework mollusk --template full
 quasar init my-app --test-language typescript --ts-sdk kit --template full
