@@ -108,7 +108,7 @@ The Metaplex program derives and allocates the metadata PDA from `["metadata", m
 | `seller_fee_basis_points` | `u16` | Royalty in basis points; defaults to `0` |
 | `is_mutable` | `bool` | Whether metadata can be updated; defaults to `true` |
 
-The Metaplex program enforces these maximum lengths. Quasar validates them at CPI build time and panics if exceeded.
+The CPI builders enforce these maximum lengths and return `ProgramError::InvalidInstructionData` when a field exceeds its limit.
 
 ## CPI methods
 
@@ -116,7 +116,7 @@ The `MetadataCpi` trait provides all Metaplex Token Metadata CPI methods.
 
 ### Variable-length instructions
 
-These instructions contain variable-length string fields and use `BufCpiCall` with a stack-allocated instruction data buffer.
+These instructions contain variable-length string fields and return `Result<CpiDynamic<...>>`. Propagate the builder result before invoking the CPI.
 
 #### create_metadata_accounts_v3
 
@@ -132,37 +132,35 @@ self.metadata_program
         &self.update_authority,
         &self.system_program,
         &self.rent,
-        b"Token Name",    // name
-        b"TKN",           // symbol
-        b"https://...",   // uri
+        "Token Name",     // name
+        "TKN",            // symbol
+        "https://...",    // uri
         500,              // seller_fee_basis_points
         true,             // is_mutable
         true,             // update_authority_is_signer
-    )
+    )?
     .invoke()?;
 ```
 
-String parameters accept `&[u8]`, byte string literals (`b"..."`), and `BorshString`.
+Create parameters accept `&str` and `&[u8]`. String literals work as written; convert a byte string with `&b"..."[..]`.
 
 #### update_metadata_accounts_v2
 
-Updates an existing metadata account. All fields are optional -- pass `None` to leave unchanged:
+Updates an existing metadata account. To replace `DataV2`, pass `Some` for `name`, `symbol`, and `uri`; if any of the three is `None`, the builder omits the `DataV2` update. The authority and boolean options remain independent.
 
 ```rust
-use quasar_lang::borsh::BorshString;
-
 self.metadata_program
     .update_metadata_accounts_v2(
         &self.metadata,
         &self.update_authority,
-        None,                               // new_update_authority
-        Some(BorshString(b"New Name")),      // name
-        None,                               // symbol
-        Some(BorshString(b"https://new")),   // uri
-        None,                               // seller_fee_basis_points
-        None,                               // primary_sale_happened
-        Some(false),                         // is_mutable
-    )
+        None,                         // new_update_authority
+        Some(&b"New Name"[..]),       // name
+        Some(&b"NEW"[..]),            // symbol
+        Some(&b"https://new"[..]),    // uri
+        Some(500),                    // seller_fee_basis_points
+        None,                         // primary_sale_happened
+        Some(false),                  // is_mutable
+    )?
     .invoke()?;
 ```
 
@@ -303,9 +301,9 @@ self.metadata_program.set_token_standard(
 ).invoke()?;
 ```
 
-## BufCpiCall vs CpiCall
+## CpiDynamic vs CpiCall
 
-Most Metaplex CPI methods use `CpiCall` where the instruction data size is known at compile time. `create_metadata_accounts_v3` and `update_metadata_accounts_v2` contain variable-length string fields, so they use `BufCpiCall` with a stack-allocated buffer instead. The `.invoke()` and `.invoke_signed()` methods work identically for both.
+Most Metaplex CPI methods use `CpiCall` when the instruction data size is known at compile time. `create_metadata_accounts_v3` and `update_metadata_accounts_v2` use `CpiDynamic` with a bounded 512-byte data buffer. Both support `.invoke()` and `.invoke_signed()` after the builder succeeds.
 
 ## InitMetadata and InitMasterEdition traits
 
