@@ -20,7 +20,7 @@ Quasar v0.1.0 programs require Rust 1.89.0 or newer.
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # Solana CLI
-sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+sh -c "$(curl -sSfL https://release.anza.xyz/v4.1.1/install)"
 ```
 
 ## Install the Quasar CLI
@@ -37,7 +37,7 @@ Quasar compiles programs to SBF (Solana Bytecode Format). Two toolchains are ava
 
 | Toolchain | Build command | Notes |
 |-----------|---------------|-------|
-| **Solana** (default) | `cargo build-sbf` | Uses the Solana CLI. No extra setup. |
+| **Solana** (default) | `cargo build-sbf` | Requires Agave CLI v4.1.1 with support for platform-tools v1.52 or newer. |
 | **Upstream** | `cargo +nightly build` | Targets `bpfel-unknown-none` with [`sbpf-linker`](https://github.com/blueshift-gg/sbpf-linker). Smaller binaries, nightly features. |
 
 Choose during `quasar init` or set in `Quasar.toml`:
