@@ -249,7 +249,9 @@ quasar dump target/deploy/my_program.so  # Specific ELF
 
 ### `quasar deploy`
 
-Deploy the program to a Solana cluster. Uses the cluster and wallet from your Solana CLI config (`solana config get`).
+Build and deploy the program to a Solana cluster. Unless a flag overrides it,
+deployment uses the cluster and payer from your Solana CLI config (`solana
+config get`).
 
 ```
 quasar deploy [OPTIONS]
@@ -259,14 +261,18 @@ quasar deploy [OPTIONS]
 |------|-------------|
 | `--program-keypair <KEYPAIR>` | Path to the program keypair (default: `target/deploy/<name>-keypair.json`) |
 | `--upgrade-authority <KEYPAIR>` | Upgrade authority keypair (default: Solana CLI default keypair) |
+| `-k, --keypair <KEYPAIR>` | Payer keypair (default: Solana CLI default keypair) |
+| `-u, --url <URL>` | Cluster moniker or RPC URL (default: Solana CLI configured cluster) |
+| `--skip-build` | Deploy the existing binary without running `quasar build` first |
 
-The program binary is auto-detected from `target/deploy/`.
+The program binary is auto-detected from `target/deploy/` after the build step.
 
 **Examples:**
 
 ```bash
-quasar build && quasar deploy                     # Build and deploy
-quasar deploy                                     # Deploy existing binary
+quasar deploy                                     # Build, then deploy with Solana CLI defaults
+quasar deploy --skip-build                        # Deploy the existing binary
+quasar deploy --url devnet --keypair ~/.config/solana/id.json
 quasar deploy --program-keypair ./my-key.json     # Custom program keypair
 quasar deploy --upgrade-authority ./authority.json # Custom upgrade authority
 ```
