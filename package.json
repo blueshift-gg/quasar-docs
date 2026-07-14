@@ -27,6 +27,9 @@
   "author": "",
   "license": "ISC",
   "type": "module",
+  "overrides": {
+    "postcss": "8.5.19"
+  },
   "bugs": {
     "url": "https://github.com/blueshift-gg/quasar-docs/issues"
   },
@@ -47,7 +50,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "autoprefixer": "^10.4.27",
-    "postcss": "^8.5.8",
+    "postcss": "8.5.19",
     "tailwindcss": "^4.2.2",
     "typescript": "^5.9.3",
     "wrangler": "^4.75.0"
