@@ -95,27 +95,19 @@ A minimal panic handler that logs `"PANIC"` on-chain.
 
 By default, `#[program]` installs a global allocator that panics on any allocation attempt. Most programs never need heap allocation because Quasar provides zero-copy alternatives for dynamic data:
 
-**`String<'a, MAX>`** and **`Vec<'a, T, MAX>`** -- stored inline in account data with a length prefix, accessed as `&str` and `&[T]` slices. No allocation, no deserialization:
+**`String<MAX>`** and **`Vec<T, MAX>`** store bounded dynamic data in the account's compact tail. Generated accessors return `&str` and `&[T]` views without allocation or deserialization:
 
 ```rust
 #[account(discriminator = 1)]
-pub struct MultisigConfig<'a> {
+pub struct MultisigConfig {
     pub creator: Address,
     pub threshold: u8,
-    pub label: String<'a, 32>,         // max 32 bytes
-    pub signers: Vec<'a, Address, 10>, // max 10 elements
+    pub label: String<32>,         // max 32 bytes
+    pub signers: Vec<Address, 10>, // max 10 elements
 }
 ```
 
-If you only have **one** dynamic field and it's the last field in the struct, use a bare `&'a str` or `&'a [u8]` instead. This avoids the length prefix entirely -- the field consumes all remaining bytes in the account, which is slightly more efficient:
-
-```rust
-#[account(discriminator = 1)]
-pub struct Note<'a> {
-    pub author: Address,
-    pub content: &'a str, // tail field -- no prefix, uses remaining space
-}
-```
+Account structs do not borrow their dynamic fields. Borrowed `&str` and `&[T]` values are available for bounded instruction arguments with `#[max(N)]`, not for account storage.
 
 If your program genuinely requires heap allocation, enable the `alloc` feature:
 

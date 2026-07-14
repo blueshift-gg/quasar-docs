@@ -73,16 +73,16 @@ The multisig state declares `#[seeds(b"multisig", creator: Address)]` on
 
 ```rust
 #[derive(Accounts)]
-pub struct Create<'info> {
+pub struct Create {
     #[account(mut)]
     pub creator: Signer,
     #[account(init, mut, payer = creator, address = MultisigConfig::seeds(creator.address()))]
-    pub config: Account<MultisigConfig<'info>>,
+    pub config: Account<MultisigConfig>,
     pub rent: Sysvar<Rent>,
     pub system_program: Program<SystemProgram>,
 }
 
-impl<'info> Create<'info> {
+impl Create {
     pub fn create_multisig(
         &mut self,
         threshold: u8,
@@ -112,13 +112,16 @@ impl<'info> Create<'info> {
         let signers = unsafe { core::slice::from_raw_parts(addrs_ptr, count) };
 
         self.config.set_inner(
-            *self.creator.address(),
-            threshold,
-            bumps.config,
-            "",
-            signers,
+            MultisigConfigInner {
+                creator: *self.creator.address(),
+                threshold,
+                bump: bumps.config,
+                label: "",
+                signers,
+            },
             self.creator.to_account_view(),
-            Some(&**self.rent),
+            self.rent.lamports_per_byte(),
+            self.rent.exemption_threshold_raw(),
         )
     }
 }
@@ -134,12 +137,12 @@ Remaining accounts are unchecked by default -- the handler explicitly verifies `
 pub struct MultisigVaultPda;
 
 #[derive(Accounts)]
-pub struct ExecuteTransfer<'info> {
+pub struct ExecuteTransfer {
     #[account(
         has_one(creator),
         address = MultisigConfig::seeds(creator.address())
     )]
-    pub config: Account<MultisigConfig<'info>>,
+    pub config: Account<MultisigConfig>,
     pub creator: UncheckedAccount,
     #[account(mut, address = MultisigVaultPda::seeds(config.address()))]
     pub vault: UncheckedAccount,
@@ -148,7 +151,7 @@ pub struct ExecuteTransfer<'info> {
     pub system_program: Program<SystemProgram>,
 }
 
-impl<'info> ExecuteTransfer<'info> {
+impl ExecuteTransfer {
     pub fn verify_and_transfer(
         &self,
         amount: u64,

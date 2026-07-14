@@ -77,16 +77,35 @@ Struct types referenced by instructions or accounts. The only non-obvious mappin
 Dynamic fields have dedicated representations:
 
 ```json
-{ "name": "label", "type": { "string": { "maxLength": 32 } } }
-{ "name": "signers", "type": { "vec": { "items": "pubkey", "maxLength": 10 } } }
-{ "name": "data", "type": { "tail": { "element": "u8" } } }
+{
+  "name": "label",
+  "type": "string",
+  "codec": {
+    "kind": "sizePrefixed",
+    "prefix": { "type": "u8", "endian": "le" },
+    "storage": "tail",
+    "maxBytes": 32,
+    "encoding": "utf8"
+  }
+}
+{
+  "name": "signers",
+  "type": { "vec": "pubkey" },
+  "codec": {
+    "kind": "sizePrefixed",
+    "prefix": { "type": "u16", "endian": "le" },
+    "storage": "tail",
+    "maxItems": 10
+  }
+}
 ```
 
-| IDL | Rust | Description |
-|-----|------|-------------|
-| `string` | `String<'a, MAX>` | Length-prefixed string with max byte count |
-| `vec` | `Vec<'a, T, MAX>` | Length-prefixed array with max element count |
-| `tail` | `&'a [u8]` / `&'a str` | Trailing data, no length prefix |
+| Rust | IDL type | Default compact codec |
+|------|----------|-----------------------|
+| `String<MAX>` | `string` | `u8` byte-length prefix, UTF-8 tail, `maxBytes = MAX` |
+| `Vec<T, MAX>` | `{ "vec": T }` | `u16` element-count prefix, data tail, `maxItems = MAX` |
+
+Bounded borrowed instruction arguments such as `#[max(32)] label: &str` project to the same compact string or vector IDL shape. Borrowed values are not account field types.
 
 ### Errors
 
