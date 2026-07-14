@@ -1,66 +1,43 @@
 ---
-title: Build a Vault
-description: Step-by-step guide to building a SOL vault program with Quasar.
+title: Build a SOL vault
+description: Build and test a system-owned vault PDA whose withdrawals require the program's signature.
 ---
 
-Build a SOL vault that lets users deposit SOL into a PDA and withdraw it later. This is the simplest complete Quasar program.
+This vault has one address per user. Deposits are ordinary System Program
+transfers into the vault PDA. Withdrawals use the same program, but the Quasar
+program signs for the PDA before lamports can leave it.
 
-You will learn to:
+The distinction matters: receiving a transfer does not make an account owned by
+your program. Direct lamport subtraction is therefore the wrong withdrawal path
+for this design.
 
-- Declare and validate a typed PDA seed layout
-- Transfer SOL via system program CPI
-- Withdraw lamports directly from a PDA
-- Test with Mollusk
-
-## Project setup
-
-Create a new project:
+## Create the project
 
 ```bash
-quasar init quasar-vault
+quasar init quasar-vault --yes --no-git --toolchain solana --test-language rust --rust-framework quasar-svm --template minimal
 cd quasar-vault
+mkdir -p src/instructions
 ```
 
-`Cargo.toml`:
+The generated project already contains the QuasarSVM and Solana development
+dependencies used by the test below.
 
-```toml
-[package]
-name = "quasar-vault"
-version = "0.1.0"
-edition = "2021"
+The finished source tree is small:
 
-[lib]
-crate-type = ["cdylib"]
-
-[features]
-alloc = []
-client = []
-debug = []
-
-[dependencies]
-quasar-lang = { version = "0.1.0" }
-```
-
-`crate-type = ["cdylib"]` produces a shared library the Solana runtime can load. The `debug` feature enables verbose error logging.
-
-## File structure
-
-Two instructions, no persistent state account:
-
-```
+```text
 src/
-  lib.rs                # Program entrypoint and instruction dispatch
+  lib.rs
+  tests.rs
   instructions/
-    mod.rs              # Re-exports
-    deposit.rs          # Deposit SOL into the vault PDA
-    withdraw.rs         # Withdraw SOL from the vault PDA
+    mod.rs
+    deposit.rs
+    withdraw.rs
 ```
 
-The vault is an `UncheckedAccount` PDA -- no `#[account]` struct needed since it only holds lamports.
+## Declare the two instructions
 
-## The program entrypoint
-
-`lib.rs` declares the program ID and instruction dispatch:
+Replace `src/lib.rs` with the following program. Keep the `declare_id!` value
+generated for your project; the address below belongs to this example.
 
 ```rust
 #![no_std]
@@ -69,6 +46,8 @@ use quasar_lang::prelude::*;
 
 mod instructions;
 use instructions::*;
+#[cfg(test)]
+mod tests;
 
 declare_id!("33333333333333333333333333333333333333333333");
 
@@ -83,20 +62,15 @@ mod quasar_vault {
 
     #[instruction(discriminator = 1)]
     pub fn withdraw(ctx: Ctx<Withdraw>, amount: u64) -> Result<(), ProgramError> {
-        ctx.accounts.withdraw(amount)
+        ctx.accounts.withdraw(amount, &ctx.bumps)
     }
 }
 ```
 
-- **`#![no_std]`** -- Quasar programs run in the SBF runtime without the standard library.
-- **`declare_id!`** -- Sets the program's on-chain address. Replace with your actual program ID after deployment.
-- **`#[program]`** -- Generates the entrypoint, dispatch table, panic handler, and allocator. See [Program Structure](/docs/core-concepts/program-structure).
-- **`#[instruction(discriminator = 0)]`** -- Each instruction gets a unique discriminator byte for routing.
-- **`Ctx<Deposit>`** -- Typed context providing validated accounts and PDA bumps.
+The `#[program]` module only routes decoded instructions. Account policy and
+state transitions live on the corresponding accounts structs.
 
-Both handlers delegate to methods on the accounts struct -- keep the `#[program]` module as a routing layer and put logic in the `impl` block.
-
-`instructions/mod.rs` re-exports both modules:
+Create `src/instructions/mod.rs`:
 
 ```rust
 pub mod deposit;
@@ -106,9 +80,9 @@ pub mod withdraw;
 pub use withdraw::*;
 ```
 
-## The deposit instruction
+## Deposit into a typed PDA
 
-Create `instructions/deposit.rs`:
+Create `src/instructions/deposit.rs`:
 
 ```rust
 use quasar_lang::prelude::*;
@@ -136,31 +110,19 @@ impl Deposit {
 }
 ```
 
-### The accounts struct
+The context establishes the authority boundary before the CPI:
 
-`#[derive(Accounts)]` generates deserialization and validation. Each field:
+- `user` signed and is writable because its balance decreases;
+- `vault` is writable and must equal the PDA derived from `"vault"` and that
+  signer; and
+- `system_program` is the executable System Program.
 
-- **`user: Signer`** -- The wallet depositing SOL. `Signer` verifies the transaction signature. `#[account(mut)]` requires a writable account because its lamports decrease during transfer.
-- **`vault: UncheckedAccount`** -- The vault PDA receiving SOL. `address = VaultPda::seeds(user.address())` verifies the typed PDA derivation and records the bump in `ctx.bumps.vault`. We use `UncheckedAccount` because the vault holds only lamports -- no data to deserialize.
-- **`system_program: Program<SystemProgram>`** -- Required for the transfer CPI. `Program<SystemProgram>` validates this is the system program.
+`UncheckedAccount` is intentional here. The vault has no program data to
+decode; its address and writability are the relevant checks.
 
-### The handler
+## Withdraw with the PDA signature
 
-The `deposit` method performs a system program transfer from the user to the vault:
-
-```rust
-self.system_program
-    .transfer(&self.user, &self.vault, amount)
-    .invoke()
-```
-
-`.transfer()` constructs the CPI instruction and `.invoke()` executes it. CPI builders are type-safe and stack-allocated. See [Cross-Program Invocations](/docs/core-concepts/cpi).
-
-`#[inline(always)]` avoids function call overhead to minimize compute units.
-
-## The withdraw instruction
-
-Create `instructions/withdraw.rs`:
+Create `src/instructions/withdraw.rs`:
 
 ```rust
 use {super::deposit::VaultPda, quasar_lang::prelude::*};
@@ -171,129 +133,132 @@ pub struct Withdraw {
     pub user: Signer,
     #[account(mut, address = VaultPda::seeds(user.address()))]
     pub vault: UncheckedAccount,
+    pub system_program: Program<SystemProgram>,
 }
 
 impl Withdraw {
     #[inline(always)]
-    pub fn withdraw(&self, amount: u64) -> Result<(), ProgramError> {
-        let vault = self.vault.to_account_view();
-        let user = self.user.to_account_view();
-        set_lamports(vault, vault.lamports() - amount);
-        set_lamports(user, user.lamports() + amount);
-        Ok(())
+    pub fn withdraw(
+        &self,
+        amount: u64,
+        bumps: &WithdrawBumps,
+    ) -> Result<(), ProgramError> {
+        let vault_signer = self.vault_signer(bumps);
+        self.system_program
+            .transfer(&self.vault, &self.user, amount)
+            .invoke_signed(&vault_signer)
     }
 }
 ```
 
-### The accounts struct
+The System Program owns the vault, so it performs the outgoing transfer and
+enforces the balance check. The transfer also requires the source account to
+sign. `vault_signer` reconstructs the seed set already validated for the
+`vault` field, allowing the runtime to sign for that PDA and no other address.
 
-The `Withdraw` struct has no `system_program` field -- we do not need the system program for withdrawals.
+Requiring `user: Signer` means a third party cannot trigger a withdrawal even
+though the destination is fixed to the user whose key is in the PDA seeds.
 
-### The handler
+## Test the complete lifecycle
 
-Since the vault PDA is owned by our program, we can directly manipulate its lamports without a CPI:
-
-```rust
-let vault = self.vault.to_account_view();
-let user = self.user.to_account_view();
-set_lamports(vault, vault.lamports() - amount);
-set_lamports(user, user.lamports() + amount);
-```
-
-`to_account_view()` provides a low-level view of the account's data. `set_lamports` modifies both balances directly -- no CPI overhead.
-
-This is safe because:
-
-1. `Signer` on `user` ensures only the depositor can withdraw (vault PDA seeds include the user's address).
-2. PDA seed verification on `vault` ensures we modify the correct vault.
-3. The Solana runtime verifies total lamports are conserved after execution.
-
-## How the PDA works
-
-The vault PDA is derived from two seeds: `"vault"` and the user's public key, so every user gets a unique vault address:
-
-```
-vault_address = PDA(["vault", user_pubkey], program_id)
-```
-
-`#[seeds(b"vault", user: Address)]` declares the seed layout once.
-`VaultPda::seeds(user.address())` supplies the typed value for each instruction,
-verifies the passed account, and records the bump in `ctx.bumps`. See [Program
-Derived Addresses](/docs/core-concepts/pda).
-
-## Testing with Mollusk
-
-Add the test dependencies:
-
-```toml
-[dev-dependencies]
-mollusk-svm = "0.10.3"
-solana-account = { version = "3.4.0" }
-solana-instruction = { version = "3.2.0", features = ["bincode"] }
-```
-
-Deposit test:
+Replace `src/tests.rs` with one test that feeds the deposited account state into
+the withdrawal:
 
 ```rust
-#[test]
-fn test_deposit() {
-    let mollusk = setup();
+extern crate std;
 
-    let (system_program, system_program_account) = keyed_account_for_system_program();
+use {
+    quasar_svm::{Account, Pubkey, QuasarSvm},
+    solana_address::Address,
+    solana_instruction::{AccountMeta, Instruction},
+    std::vec,
+};
 
-    let user = Address::new_unique();
-    let user_account = Account::new(10_000_000_000, 0, &system_program);
+fn setup() -> QuasarSvm {
+    let elf = std::fs::read("target/deploy/quasar_vault.so").unwrap();
+    QuasarSvm::new().with_program(&Pubkey::from(crate::ID), &elf)
+}
 
-    let (vault, _vault_bump) =
-        Address::find_program_address(&[b"vault", user.as_ref()], &crate::ID);
-    let vault_account = Account::new(0, 0, &system_program);
-
-    let deposit_amount: u64 = 1_000_000_000;
-
-    let instruction: Instruction = DepositInstruction {
-        user,
-        vault,
-        system_program,
-        amount: deposit_amount,
+fn system_account(address: Pubkey, lamports: u64) -> Account {
+    Account {
+        address,
+        lamports,
+        data: vec![],
+        owner: quasar_svm::system_program::ID,
+        executable: false,
     }
-    .into();
+}
 
-    let result = mollusk.process_instruction(
-        &instruction,
-        &[
-            (user, user_account.clone()),
-            (vault, vault_account.clone()),
-            (system_program, system_program_account.clone()),
+fn vault_instruction(
+    discriminator: u8,
+    user: Pubkey,
+    vault: Pubkey,
+    amount: u64,
+) -> Instruction {
+    let mut data = vec![discriminator];
+    data.extend_from_slice(&amount.to_le_bytes());
+
+    Instruction {
+        program_id: Address::from(crate::ID.to_bytes()),
+        accounts: vec![
+            AccountMeta::new(Address::from(user.to_bytes()), true),
+            AccountMeta::new(Address::from(vault.to_bytes()), false),
+            AccountMeta::new_readonly(
+                Address::from(quasar_svm::system_program::ID.to_bytes()),
+                false,
+            ),
         ],
+        data,
+    }
+}
+
+#[test]
+fn deposit_then_withdraw() {
+    let mut svm = setup();
+    let user = Pubkey::new_unique();
+    let (vault, _) =
+        Pubkey::find_program_address(&[b"vault", user.as_ref()], &crate::ID);
+
+    let deposit = vault_instruction(0, user, vault, 1_000_000_000);
+    let deposited = svm.process_instruction(
+        &deposit,
+        &[system_account(user, 10_000_000_000), system_account(vault, 0)],
     );
+    deposited.assert_success();
+    assert_eq!(deposited.account(&vault).unwrap().lamports, 1_000_000_000);
 
-    assert!(result.program_result.is_ok());
+    let withdraw = vault_instruction(1, user, vault, 400_000_000);
+    let withdrawn = svm.process_instruction(&withdraw, &deposited.accounts);
+    withdrawn.assert_success();
 
-    let user_after = result.resulting_accounts[0].1.lamports;
-    let vault_after = result.resulting_accounts[1].1.lamports;
-
-    assert_eq!(user_after, 10_000_000_000 - deposit_amount);
-    assert_eq!(vault_after, deposit_amount);
+    assert_eq!(withdrawn.account(&user).unwrap().lamports, 9_400_000_000);
+    assert_eq!(withdrawn.account(&vault).unwrap().lamports, 600_000_000);
 }
 ```
 
-The test sets up a user with 10 SOL, deposits 1 SOL, and verifies lamports moved correctly. The withdraw test follows the same pattern -- deposit first, then withdraw with only two accounts (no system program needed for direct lamport transfer).
-
-Run tests:
+Build the SBF binary and run the test through the project configuration:
 
 ```bash
-cargo test-sbf
+quasar test
 ```
 
-## Summary
+The test is deliberately sequential. Two independent tests, one with a
+system-owned deposit vault and one with a pre-funded program-owned withdrawal
+vault, would not prove that the documented lifecycle works.
 
-- **Account structs with constraints** -- `#[derive(Accounts)]` generates validation, PDA derivation, and signer checks.
-- **CPI for deposits** -- Type-safe, stack-allocated system program transfer.
-- **Direct lamport manipulation for withdrawals** -- No CPI overhead when your program owns the source account.
-- **PDA-based addressing** -- Each user gets a deterministic vault address.
+## What this design guarantees
 
-## Next steps
+- Every user gets one deterministic vault address under this program ID.
+- Only a transaction signed by that user can request a withdrawal.
+- Only this program can produce the PDA signature required for an outgoing
+  System Program transfer.
+- The System Program rejects a withdrawal larger than the vault balance.
 
-- [Build an Escrow](/docs/guides/build-an-escrow) -- a more complex program with SPL token transfers, account initialization, and event emission.
-- [Build a Multisig](/docs/guides/build-a-multisig) -- dynamic accounts, remaining accounts, and threshold-based authorization.
-- [Accounts and Validation](/docs/core-concepts/accounts-and-validation) -- deep dive into all account types and constraint attributes.
+This vault has no persistent data, delegate, lockup, or recovery authority. Use
+an `Account<T>` state PDA when the withdrawal policy needs more than the user's
+signature.
+
+<Cards>
+  <Card title="Typed PDA mechanics" href="/docs/core-concepts/pda" description="See how address validation and generated signer seeds share one declaration." />
+  <Card title="CPI model" href="/docs/core-concepts/cpi" description="Understand direct and PDA-signed cross-program invocations." />
+</Cards>
