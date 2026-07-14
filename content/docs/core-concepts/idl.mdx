@@ -3,7 +3,10 @@ title: IDL Generation
 description: How Quasar generates program interface descriptions and client code from your Rust source.
 ---
 
-The IDL is a JSON file describing your program's interface -- instructions, accounts, events, types, and errors. Generated from your Rust source by the CLI, it drives TypeScript and Rust client generation, and is consumed by [`declare_program!`](./cpi#declare_program) for typed CPI at compile time.
+The IDL is a JSON description of your program's instructions, accounts, events,
+types, and errors. Quasar generates it from Rust source, uses it for Rust and
+TypeScript clients, and reads it in [`declare_program!`](./cpi#declare_program)
+for typed CPI.
 
 ## What the IDL contains
 
@@ -141,7 +144,8 @@ Accounts and events each list their name and discriminator. Event discriminators
 
 ### Types
 
-Struct types referenced by instructions or accounts. The only non-obvious mapping is `pubkey` for `Address` -- everything else (`u8`, `u64`, `bool`, etc.) maps directly to its Rust equivalent:
+Struct types referenced by instructions or accounts. `Address` maps to `pubkey`;
+the primitive integer and boolean names match their Rust types:
 
 ```json
 {
@@ -226,7 +230,7 @@ target/
 quasar client target/idl/my_program.json --lang typescript
 ```
 
-The TypeScript output contains two flavors from the same IDL: one for `@solana/web3.js` v2 and one for `@solana/kit`. Both include typed instruction builders, account/event type definitions, discriminator constants, and codec functions.
+The TypeScript output contains Web3.js v3 and Kit clients generated from the same IDL. Both include typed instruction builders, account and event types, discriminator constants, and codecs.
 
 ### Rust client
 
@@ -243,6 +247,6 @@ let ix: Instruction = DepositInstruction {
 
 ## Follow the schema downstream
 
-- [Program Structure](./program-structure) -- how the `#[program]` macro generates the dispatch table
-- [Instructions](./instructions) -- discriminators and argument handling
-- [CPI](./cpi) -- `declare_program!` for typed cross-program calls
+- [Program Structure](./program-structure) explains how `#[program]` generates the dispatch table
+- [Instructions](./instructions) covers discriminators and argument handling
+- [CPI](./cpi) documents typed cross-program calls with `declare_program!`

@@ -183,7 +183,8 @@ quasar test --verbose             # Print the commands being run
 
 ### `quasar profile`
 
-Measure compute-unit usage by statically walking the sBPF binary's call graph. Runs a debug build automatically if no ELF path is given.
+Estimate static compute cost from the sBPF call graph and measure the deploy
+binary size. Quasar runs a debug build when you omit the ELF path.
 
 ```
 quasar profile [ELF] [OPTIONS]
@@ -191,33 +192,43 @@ quasar profile [ELF] [OPTIONS]
 
 | Flag | Description |
 |------|-------------|
-| `ELF` | Path to a compiled `.so` (auto-detected from `target/deploy/` if omitted) |
-| `--expand` | Show full terminal output with all functions and bar charts |
-| `--diff <PROGRAM>` | Compare CU cost against an on-chain program by name |
+| `ELF` | Path to an unstripped `.so`; omit it to build and detect the program |
+| `--expand` | Print the complete function table |
+| `--diff <PROGRAM>` | Compare stored profile snapshots for a program |
 | `--share` | Upload the profile as a public GitHub Gist |
-| `-w, --watch` | Watch `src/` for changes and re-profile automatically |
+| `-w, --watch` | Rebuild when `src/` changes |
+| `--budget <FILE>` | Budget file for write or assertion mode; defaults to `quasar-budget.toml` |
+| `--write-budget` | Write ceilings for the current program |
+| `--assert-budget` | Exit with code 2 when a ceiling is exceeded |
+| `--headroom <PERCENT>` | Add headroom when writing ceilings; defaults to 5 |
+| `--json` | Print stable machine-readable output without starting the flamegraph server |
 
-Tracks results between runs. On the first run, shows the top 5 functions by cost. On subsequent runs, shows deltas:
+`--write-budget` records the static total, selected function costs, and the
+stripped deploy ELF size. Commit the file, then enforce it in CI:
 
+```bash
+quasar profile --write-budget --headroom 5
+quasar profile --assert-budget --json
 ```
-  my_program  12,345 CU (+42)
-     8,000 (+200)   5.0%  Initialize::verify
-     4,000 (-158)   3.0%  Deposit::process
 
-  flamegraph  http://127.0.0.1:7777/?program=my_program
-```
+The static CU estimate counts sBPF instructions along the resolved call graph.
+It is useful for detecting code-generation regressions. Runtime transaction CU
+also includes syscall costs, account work, and the path taken by a specific
+instruction, so measure that separately in program tests.
 
-A background HTTP server starts automatically for the flamegraph viewer, shutting down after 30 seconds of inactivity.
+Without `--json`, Quasar stores profile snapshots under `target/profile/`
+and starts the local flamegraph viewer. See [CU Profiler](/docs/profiling/cu-profiler)
+for the budget format and interpretation.
 
 **Examples:**
 
 ```bash
-quasar profile                    # Auto-build and profile
-quasar profile --expand           # Show all functions
-quasar profile --diff my-program  # Compare with on-chain program
-quasar profile --share            # Upload as Gist
-quasar profile --watch            # Auto-profile on changes
-quasar profile target/deploy/my_program.so  # Profile specific ELF
+quasar profile
+quasar profile --expand
+quasar profile --write-budget --headroom 10
+quasar profile --assert-budget --budget ci/quasar-budget.toml
+quasar profile --json > profile.json
+quasar profile target/deploy/debug/my_program.so.debug
 ```
 
 ---
@@ -251,9 +262,8 @@ quasar dump target/deploy/my_program.so  # Specific ELF
 
 ### `quasar deploy`
 
-Build and deploy the program to a Solana cluster. Unless a flag overrides it,
-deployment uses the cluster and payer from your Solana CLI config (`solana
-config get`).
+Build, preflight, deploy, and verify the program. Quasar uses the cluster and
+payer from your Solana CLI config unless a flag overrides them.
 
 ```
 quasar deploy [OPTIONS]
@@ -261,22 +271,65 @@ quasar deploy [OPTIONS]
 
 | Flag | Description |
 |------|-------------|
-| `--program-keypair <KEYPAIR>` | Path to the program keypair (default: `target/deploy/<name>-keypair.json`) |
-| `--upgrade-authority <KEYPAIR>` | Upgrade authority keypair (default: Solana CLI default keypair) |
-| `-k, --keypair <KEYPAIR>` | Payer keypair (default: Solana CLI default keypair) |
-| `-u, --url <URL>` | Cluster moniker or RPC URL (default: Solana CLI configured cluster) |
-| `--skip-build` | Deploy the existing binary without running `quasar build` first |
+| `--program-keypair <KEYPAIR>` | Program keypair; defaults to `target/deploy/<name>-keypair.json` |
+| `--upgrade-authority <KEYPAIR>` | Upgrade authority keypair; defaults to the Solana CLI signer |
+| `-k, --keypair <KEYPAIR>` | Transaction payer; defaults to the Solana CLI signer |
+| `-u, --url <URL>` | Cluster moniker or RPC URL |
+| `--skip-build` | Deploy the existing binary after running the same lint and lock checks |
+| `--skip-verify` | Skip the post-deploy byte and authority check |
 
-The program binary is auto-detected from `target/deploy/` after the build step.
+Programs with generated instruction discriminators need a checked-in
+`quasar.lock.json`. Create or update it with `quasar lint --update-lock`.
+A normal deployment then builds the program, deploys it through the Solana CLI,
+dumps the cluster bytes, and compares them with the local ELF.
+
+Successful verification writes
+`target/deploy/<program>-deployment.json`. The manifest records program,
+artifact, ABI, authority, source, and cluster provenance. Quasar resolves a
+missing `--url` from the Solana CLI configuration and marks a dirty source
+revision with a `-dirty` suffix.
 
 **Examples:**
 
 ```bash
-quasar deploy                                     # Build, then deploy with Solana CLI defaults
-quasar deploy --skip-build                        # Deploy the existing binary
+quasar deploy
+quasar deploy --skip-build
 quasar deploy --url devnet --keypair ~/.config/solana/id.json
-quasar deploy --program-keypair ./my-key.json     # Custom program keypair
-quasar deploy --upgrade-authority ./authority.json # Custom upgrade authority
+quasar deploy --program-keypair ./my-key.json
+quasar deploy --upgrade-authority ./authority.json
+```
+
+See [Deploy and verify a program](/docs/guides/deploy-and-verify) for the release
+workflow and the limits of the verification.
+
+---
+
+### `quasar verify`
+
+Compare local artifacts and expected deployment provenance with a live program.
+
+```
+quasar verify [OPTIONS]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--program-id <ADDRESS>` | Program address; defaults to the project keypair address |
+| `--program-keypair <KEYPAIR>` | Program keypair used to derive the address |
+| `--upgrade-authority <KEYPAIR>` | Keypair whose address must match the live upgrade authority |
+| `-u, --url <URL>` | Cluster moniker or RPC URL |
+| `--elf-path <ELF>` | Local ELF; defaults to `target/deploy/<name>.so` |
+| `--manifest <MANIFEST>` | Deployment manifest; Quasar detects the default path when omitted |
+
+The command checks the program ID, deployed ELF hash, IDL hash, ABI hash,
+upgrade authority, program-data address, last deploy slot, cluster, and source
+revision represented by the manifest. It reports every manifest mismatch in one
+run.
+
+```bash
+quasar verify --url devnet
+quasar verify --program-id <ADDRESS> --elf-path artifacts/program.so --url devnet
+quasar verify --manifest artifacts/program-deployment.json --url devnet
 ```
 
 ---
@@ -377,6 +430,35 @@ quasar lint --update-lock # Record the reviewed surface
 quasar lint --no-diff     # Ignore the existing surface for this run
 quasar lint --strict      # Fail on every reported severity
 ```
+
+---
+
+### `quasar audit`
+
+Print the account validation and lifecycle plan generated by the compiler.
+
+```
+quasar audit [IDL] [--json]
+```
+
+| Argument or flag | Description |
+|------------------|-------------|
+| `IDL` | Generated IDL JSON; omit it to use the current project's IDL |
+| `--json` | Print the versioned validation-plan extension as JSON |
+
+For each instruction, the report shows account access, wrapper and load mode,
+rent handling, checks before and after load, and epilogue work such as `close`.
+Use it during review to confirm what the macro generated from an accounts
+struct.
+
+```bash
+quasar build
+quasar audit
+quasar audit target/idl/my_program.json --json > validation-plan.json
+```
+
+The report describes generated mechanics. It does not decide whether your
+authority model or business constraints are sufficient.
 
 ---
 

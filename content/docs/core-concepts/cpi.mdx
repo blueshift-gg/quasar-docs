@@ -3,7 +3,8 @@ title: Cross-Program Invocations
 description: Method-style CPI calls, PDA signing, declare_program!, and events.
 ---
 
-CPI in Quasar is method-style -- you call methods on program types or account types and get back a `CpiCall` that you `.invoke()`. Everything is stack-allocated with const-generic sizes, no heap.
+Quasar exposes CPI as methods on program and account types. Each method returns
+a stack-allocated `CpiCall` that you execute with `.invoke()`.
 
 ## The pattern
 
@@ -76,28 +77,60 @@ pub fn withdraw_tokens_and_close(&mut self, bumps: &TakeBumps) -> Result<(), Pro
 The helper rebuilds the typed seed set and appends the verified bump from
 `TakeBumps`. See [PDA](./pda) for typed seed declarations and bump handling.
 
-## declare_program!
+## `declare_program!`
 
-Reads an IDL JSON at compile time and generates typed CPI functions for calling another program:
+`declare_program!` reads a Quasar IDL during compilation and generates typed CPI
+helpers plus readers for fixed-layout foreign accounts.
 
-```rust
-declare_program!(vault_program, "target/idl/quasar_vault.json");
+Enable the feature in `Cargo.toml`:
+
+```toml
+quasar-lang = { version = "=0.1.0", features = ["declare-program"] }
 ```
 
-This generates a module with:
+Declare the foreign program once:
 
-- `pub const ID: Address` from the IDL
-- A program type (e.g., `VaultProgram`) with executable and address validation
-- A method per instruction on the program type
-- A free function per instruction (for raw `AccountView` usage)
+```rust
+use quasar_lang::{declare_program, prelude::*};
 
-Account flags, discriminators, and data buffer sizes are all derived from the IDL and baked into the generated code at compile time. Only primitives and addresses are supported as CPI arguments. See [IDL](./idl) for the full IDL structure.
+declare_program!(vault_program, "idls/vault.json");
+```
+
+The generated `vault_program` module contains:
+
+- `ID` and a typed, executable program account;
+- a free function and program method for each instruction;
+- fixed-layout structs referenced by instruction arguments or accounts; and
+- `read_account` methods for declared account types.
+
+The CPI encoder supports primitives, addresses, fixed structs, and fixed arrays.
+It calculates the data buffer size at compile time.
+
+Read a foreign account through its generated snapshot type:
+
+```rust
+let vault = vault_program::Vault::read_account(vault_view)?;
+let authority = vault.authority;
+```
+
+`read_account` checks that the foreign program owns the account, enforces the
+minimum data length, and checks the discriminator before decoding an owned
+snapshot. Nested fixed structs and arrays work recursively.
+
+Compact layouts, vectors, strings, options, and other dynamic fields produce a
+compile error. Quasar does not guess how another program stores dynamic data.
+Use that program's reader or write a reviewed decoder for its documented wire
+format.
+
+The generated reader verifies structure and ownership. Your instruction still
+needs to check authority relationships and business rules.
 
 ## Events
 
 ### emit!
 
-Writes event data to the program log. Fast, but spoofable -- any program can write to the log:
+Writes event data to the program log. Any program can imitate a log event, so
+clients must treat this form as unauthenticated:
 
 ```rust
 emit!(MakeEvent {
@@ -130,10 +163,11 @@ impl EmitViaCpi {
 }
 ```
 
-Use `emit!` for most indexing. Use `emit_cpi!` when event authenticity matters -- financial events, governance actions, anything clients need to trust.
+Use `emit!` for ordinary indexing. Use `emit_cpi!` for events that clients must
+authenticate, such as financial or governance actions.
 
 ## Continue with typed CPIs
 
-- [Program Derived Addresses](./pda) -- PDA derivation and signing
-- [Accounts and Validation](./accounts-and-validation) -- the Bumps struct and seed configuration
-- [IDL](./idl) -- generating the IDL consumed by `declare_program!`
+- [Program Derived Addresses](./pda) for PDA derivation and signing
+- [Accounts and Validation](./accounts-and-validation) for the `Bumps` struct and seed configuration
+- [IDL](./idl) for generating the input consumed by `declare_program!`

@@ -1,230 +1,162 @@
 ---
 title: QuasarSVM (TypeScript)
-description: Testing Quasar programs with the TypeScript-based QuasarSVM test harness.
+description: Test Quasar programs locally with Vitest, Web3.js v3, or Kit.
 ---
 
-QuasarSVM provides TypeScript bindings for `@solana/web3.js` and `@solana/kit`. Write Mocha tests that execute your program in a local SVM -- no validator required.
+QuasarSVM loads a compiled program into a local Solana VM. Tests run in-process, without a validator or RPC endpoint.
 
-## Choosing a variant
+## Start from the generated test
 
-`quasar init` offers two TypeScript variants:
+Run `quasar init` and choose either **TypeScript (Web3.js)** or **TypeScript (Kit)**. The generated project includes:
 
-| Variant | Package | Best for |
-|---------|---------|----------|
-| **TypeScript** | `@solana/web3.js` | Teams already using web3.js v2 |
-| **Kit** | `@solana/kit` | New projects using the Solana Kit SDK |
+- a Vitest test under `tests/`
+- the selected package manager commands in `Quasar.toml`
+- Web3.js v3 or Kit dependencies
+- `@blueshift-gg/quasar-svm` pinned to `0.1.13`
 
-Both use the same SVM execution engine. The difference is how you construct accounts and instructions.
+The Web3.js package requires Node.js 22.13 or newer.
 
-## Setup: Web3.js variant
-
-`quasar init` generates the scaffolding. Key files:
-
-**package.json**
-```json
-{
-  "dependencies": {
-    "@blueshift-gg/quasar-svm": "^0.1",
-    "@solana/web3.js": "github:blueshift-gg/web3.js#v2"
-  },
-  "devDependencies": {
-    "@types/chai": "^5.2.0",
-    "@types/mocha": "^10.0.0",
-    "chai": "^6.2.2",
-    "mocha": "^11.7.5",
-    "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
-  },
-  "scripts": {
-    "test": "mocha --require tsx --delay tests/*.test.ts"
-  }
-}
-```
-
-Then install dependencies:
-
-```bash
-npm install
-```
-
-## Setup: Kit variant
-
-The Kit variant uses `@solana/kit` instead:
-
-```json
-{
-  "dependencies": {
-    "@blueshift-gg/quasar-svm": "^0.1",
-    "@solana/kit": "^6.0.0"
-  }
-}
-```
-
-Kit uses `address()` and `lamports()` helpers instead of `Keypair` and raw bigints.
-
-## Writing tests with Web3.js
-
-Import the generated client from `target/client/typescript/` and create a `QuasarSvm` instance:
-
-```typescript
-import { Keypair, SystemProgram, KeyedAccountInfo } from "@solana/web3.js";
-import { MyProgramClient } from "../target/client/typescript/my_program/web3.js";
-import { readFile } from "node:fs/promises";
-import { describe, it, run } from "mocha";
-import { assert } from "chai";
-import { QuasarSvm } from "@blueshift-gg/quasar-svm/web3.js";
-
-const MyProgram = new MyProgramClient();
-
-describe("MyProgram", async () => {
-  const vm = new QuasarSvm()
-    .addSystemProgram()
-    .addProgram(MyProgramClient.programId, await readFile("target/deploy/my_program.so"));
-
-  const { publicKey: payer } = await Keypair.generate();
-
-  it("initializes", async () => {
-    const initializeInstruction = MyProgram.createInitializeInstruction({
-      payer,
-    });
-
-    const accounts = [
-      {
-        accountId: payer,
-        accountInfo: {
-          executable: false,
-          owner: SystemProgram.programId,
-          lamports: 1_000_000_000n,
-          data: new Uint8Array(),
-          rentEpoch: 0n,
-        },
-      } as KeyedAccountInfo,
-    ];
-
-    const result = vm.processInstruction(initializeInstruction, accounts);
-
-    assert.isTrue(result.status.ok, `initialize failed:\n${result.logs.join("\n")}`);
-  });
-
-  run();
-});
-```
-
-### Key types
-
-- **`QuasarSvm`** -- The local VM instance. `.addSystemProgram()` includes the system program; `.addProgram()` loads your compiled binary.
-- **`processInstruction`** -- Executes a single instruction and returns `status`, `logs`, and updated account state.
-- **`KeyedAccountInfo`** -- Pairs an account address with its initial state (lamports, data, owner).
-
-## Writing tests with Kit
-
-The Kit variant uses `@solana/kit` types:
-
-```typescript
-import { generateKeyPairSigner, address, lamports, Account } from "@solana/kit";
-import { MyProgramClient, PROGRAM_ADDRESS } from "../target/client/typescript/my_program/kit";
-import { describe, it, run } from "mocha";
-import { QuasarSvm } from "@blueshift-gg/quasar-svm/kit";
-import { readFile } from "node:fs/promises";
-import { assert } from "chai";
-
-const MyProgram = new MyProgramClient();
-
-describe("MyProgram", async () => {
-
-  const vm = new QuasarSvm()
-    .addSystemProgram()
-    .addProgram(PROGRAM_ADDRESS, await readFile("target/deploy/my_program.so"))
-
-  const payer = await generateKeyPairSigner();
-
-  it("initializes", async () => {
-    const initializeInstruction = MyProgram.createInitializeInstruction({
-      payer: payer.address,
-    });
-
-    const accounts: Account<Uint8Array>[] = [
-      {
-        address: payer.address,
-        data: new Uint8Array(),
-        executable: false,
-        lamports: lamports(1_000_000_000n),
-        programAddress: address("11111111111111111111111111111111"),
-        space: 0n,
-      }
-    ];
-
-    const result = vm.processInstruction(initializeInstruction, accounts);
-
-    assert.isTrue(result.status.ok, `initialize failed:\n${result.logs.join("\n")}`);
-  });
-
-  run()
-});
-```
-
-Differences from Web3.js:
-- `generateKeyPairSigner()` instead of `Keypair.generate()`
-- `.address` instead of `.publicKey`
-- Typed `lamports()` and `address()` helpers
-- `PROGRAM_ADDRESS` imported from the generated client
-
-## Processing instructions
-
-Both variants use `processInstruction()`. The result contains:
-
-- **`status.ok`** -- Boolean indicating success or failure
-- **`logs`** -- Array of program log lines (useful for debugging)
-- **`computeUnitsConsumed`** -- Number of CU used by the instruction
-
-```typescript
-const result = vm.processInstruction(instruction, accounts);
-
-if (!result.status.ok) {
-  console.error("Failed:", result.logs.join("\n"));
-}
-
-console.log("CU used:", result.computeUnitsConsumed);
-```
-
-## Account deserialization
-
-The generated client includes deserialization functions for your account types:
-
-```typescript
-const result = vm.processInstruction(depositInstruction, accounts);
-assert.isTrue(result.status.ok);
-
-// Access updated account data from the result
-const vaultData = result.accounts[1].data;
-```
-
-## Running tests
+Build and run the generated test:
 
 ```bash
 quasar test
 ```
 
-Builds the program, generates the TypeScript client, installs dependencies if needed, and runs `mocha`.
+`quasar test` builds the program, generates its IDL and clients, installs missing JavaScript dependencies, and runs the configured Vitest command.
 
-Filter tests:
+## Web3.js v3 test
 
-```bash
-quasar test --filter "deposit"
+This is the core shape of the generated Web3.js test:
+
+```typescript
+import { Buffer } from "node:buffer";
+import { Address, Keypair, TransactionInstruction } from "@solana/web3.js";
+import { QuasarSvm, createKeyedSystemAccount } from "@blueshift-gg/quasar-svm/web3.js";
+import { readFile } from "node:fs/promises";
+import { describe, expect, it } from "vitest";
+
+describe.concurrent("MyProgram", async () => {
+  it("initializes", async () => {
+    const idl = JSON.parse(
+      await readFile("target/idl/my_program.json", "utf8"),
+    ) as { address: string };
+
+    const programAddress = new Address(idl.address);
+    const vm = new QuasarSvm();
+    vm.addProgram(
+      programAddress,
+      await readFile("target/deploy/my_program.so"),
+    );
+
+    const { publicKey: payer } = await Keypair.generate();
+    const instruction = new TransactionInstruction({
+      programId: programAddress,
+      keys: [{ pubkey: payer, isSigner: true, isWritable: false }],
+      data: Buffer.from([0]),
+    });
+
+    const result = vm.processInstruction(instruction, [
+      createKeyedSystemAccount(payer),
+    ]);
+
+    expect(
+      result.status.ok,
+      `initialize failed:\n${result.logs.join("\n")}`,
+    ).toBe(true);
+  });
+});
 ```
 
-Or run mocha directly:
+For application tests, replace the manual `TransactionInstruction` with the generated client:
 
-```bash
-npx mocha --require tsx --delay tests/*.test.ts
+```typescript
+const client = new MyProgramClient();
+const instruction = client.createInitializeInstruction({ payer });
 ```
 
-## Watch mode
+Use `await` when a generated builder derives a PDA or resolves account data.
 
-Rebuild and re-run tests on every source change:
+## Kit test
 
-```bash
-quasar test --watch
+The Kit variant changes the SDK types, not the VM behavior:
+
+```typescript
+import {
+  AccountRole,
+  address,
+  generateKeyPairSigner,
+} from "@solana/kit";
+import { QuasarSvm, createKeyedSystemAccount } from "@blueshift-gg/quasar-svm/kit";
+import { readFile } from "node:fs/promises";
+import { describe, expect, it } from "vitest";
+
+describe.concurrent("MyProgram", async () => {
+  it("initializes", async () => {
+    const idl = JSON.parse(
+      await readFile("target/idl/my_program.json", "utf8"),
+    ) as { address: string };
+
+    const programAddress = address(idl.address);
+    const vm = new QuasarSvm();
+    vm.addProgram(
+      programAddress,
+      await readFile("target/deploy/my_program.so"),
+    );
+
+    const payer = await generateKeyPairSigner();
+    const instruction = {
+      programAddress,
+      accounts: [
+        { address: payer.address, role: AccountRole.READONLY_SIGNER },
+      ],
+      data: Uint8Array.from([0]),
+    };
+
+    const result = vm.processInstruction(instruction, [
+      createKeyedSystemAccount(payer.address),
+    ]);
+
+    expect(
+      result.status.ok,
+      `initialize failed:\n${result.logs.join("\n")}`,
+    ).toBe(true);
+  });
+});
 ```
 
-Rebuilds, regenerates the client, and re-runs tests on every source change.
+## Inspect the result
+
+`processInstruction` returns the execution status, logs, compute units, return data, and post-execution accounts.
+
+```typescript
+const result = vm.processInstruction(instruction, accounts);
+
+result.assertSuccess();
+console.log(result.computeUnitsConsumed);
+
+const updated = result.account(accountAddress);
+if (!updated) throw new Error("expected account was not returned");
+```
+
+Pass a Solana decoder to `account` when you want decoded data:
+
+```typescript
+const token = result.account(tokenAddress, getTokenDecoder());
+expect(token?.amount).toBe(1_000n);
+```
+
+## Run focused tests
+
+Use Quasar's filter to forward a test-name pattern to Vitest:
+
+```bash
+quasar test --filter initialize
+```
+
+Run the configured package script directly when the program and generated client are already current:
+
+```bash
+npm test
+```
+
+Use `quasar test --watch` to rebuild and rerun tests when source files change.

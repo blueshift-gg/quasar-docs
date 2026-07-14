@@ -11,7 +11,7 @@ Add these dev-dependencies to your `Cargo.toml`:
 
 ```toml
 [dev-dependencies]
-quasar-svm = { git = "https://github.com/blueshift-gg/quasar-svm" }
+quasar-svm = "0.1"
 solana-account = { version = "3.4.0" }
 solana-address = { version = "2.2.0", features = ["decode"] }
 solana-instruction = { version = "3.2.0", features = ["bincode"] }
@@ -242,4 +242,4 @@ Or run tests directly with cargo:
 cargo test -- --nocapture
 ```
 
-`--nocapture` shows `println!` output (e.g., CU consumption numbers).
+`--nocapture` shows `println!` output, including CU consumption numbers.
