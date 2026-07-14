@@ -19,7 +19,7 @@ export const docs = defineDocs({
             return `${'#'.repeat(node.depth)} ${content}`;
           },
         },
-        onStringify(node: Nodes) {
+        stringify(node: Nodes): string | undefined {
           // Drop raw html images e.g. <img src="..." />
           if (node.type === 'html' && /^\s*<img\b/i.test(node.value)) {
             node.data ??= {};
