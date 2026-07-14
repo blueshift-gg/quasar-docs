@@ -165,10 +165,18 @@ pub struct CreateVault {
 }
 ```
 
-For PDA accounts, combine `init` with `seeds` and `bump`:
+For PDA accounts, declare typed seeds on the account type and bind the field
+with `address`:
 
 ```rust
-#[account(init, payer = payer, seeds = [b"vault", authority.address().as_ref()], bump)]
+#[account(discriminator = 1)]
+#[seeds(b"vault", authority: Address)]
+pub struct Vault {
+    pub authority: Address,
+    pub bump: u8,
+}
+
+#[account(init, payer = payer, address = Vault::seeds(authority.address()))]
 pub vault: Account<Vault>,
 ```
 
@@ -182,7 +190,8 @@ Like `init`, but skips creation if the account already exists. Creates and initi
 | **Requires** | `payer` field, `system_program` field |
 
 ```rust
-#[account(init_if_needed, payer = payer, seeds = [b"profile", user.address().as_ref()], bump)]
+// Profile declares #[seeds(b"profile", user: Address)].
+#[account(init_if_needed, payer = payer, address = Profile::seeds(user.address()))]
 pub profile: Account<Profile>,
 ```
 
@@ -213,48 +222,55 @@ pub profile: Account<Profile>,
 
 ## PDA (Program Derived Address)
 
-### `seeds = [...]`
+### `#[seeds(...)]`
 
-Seeds used to derive a PDA. Combined with `bump`, verifies the account address matches the derived PDA.
+Declares a typed PDA layout on a program account type:
+
+```rust
+#[account(discriminator = 1)]
+#[seeds(b"vault", authority: Address, vault_id: u64)]
+pub struct Vault {
+    pub authority: Address,
+    pub vault_id: u64,
+    pub bump: u8,
+}
+```
 
 | | |
 |---|---|
-| **Syntax** | `#[account(seeds = [seed1, seed2, ...], bump)]` |
-| **Error on failure** | `QuasarError::InvalidPda` |
+| **Syntax** | `#[seeds(b"prefix", name: Type, ...)]` |
+| **Supported parameter types** | `Address`, `u8`, `u16`, `u32`, `u64`, `[u8; N]` where `N <= 32` |
+| **Limits** | 16 seeds before the bump; 32 bytes per seed |
 
-Seed expressions can be:
-- Byte literals: `b"prefix"`
-- Field references: `authority` (uses `.address().as_ref()`)
-- Byte slices: `&some_value.to_le_bytes()`
-- Any expression that evaluates to `&[u8]`
+### `address = Type::seeds(...)`
+
+Binds an accounts field to the declared layout. It validates the canonical PDA
+and stores the verified bump in `ctx.bumps.<field_name>`:
 
 ```rust
 #[account(
-    seeds = [b"vault", authority.address().as_ref(), &vault_id.to_le_bytes()],
-    bump
+    mut,
+    address = Vault::seeds(authority.address(), vault_id)
 )]
 pub vault: Account<Vault>,
 ```
 
-### `bump`
+If the account type contains `bump: u8`, Quasar can read that field to verify
+an existing account without searching for the bump. Save the generated bump
+when initializing the account.
 
-Used with `seeds` to handle the PDA bump seed. Two modes:
-
-**Without a value** -- the framework finds the bump by calling `find_program_address`:
-
-```rust
-#[account(seeds = [b"vault"], bump)]
-```
-
-The discovered bump is stored in `ctx.bumps.<field_name>`.
-
-**With a value** -- the framework verifies the PDA using the provided bump:
+For a PDA without a program account type, declare a unit marker:
 
 ```rust
-#[account(seeds = [b"vault"], bump = vault.bump)]
+#[derive(Seeds)]
+#[seeds(b"vault", authority: Address)]
+pub struct VaultPda;
+
+#[account(address = VaultPda::seeds(authority.address()))]
+pub vault: UncheckedAccount,
 ```
 
-This is more CU-efficient since it skips the bump search.
+Each typed PDA field also generates a `<field>_signer` method for CPI signing.
 
 ---
 
@@ -522,8 +538,7 @@ pub struct CreateNft {
 | `init_if_needed` | `#[account(init_if_needed, payer = p)]` | -- |
 | `payer` | `#[account(payer = field)]` | -- |
 | `space` | `#[account(space = EXPR)]` | -- |
-| `seeds` | `#[account(seeds = [...], bump)]` | `InvalidPda` |
-| `bump` | `#[account(bump)]` or `#[account(bump = EXPR)]` | -- |
+| typed PDA | `#[seeds(...)]` plus `#[account(address = Type::seeds(...))]` | `InvalidPda` |
 | `close` | `#[account(close = dest)]` | -- |
 | `realloc` | `#[account(realloc = EXPR)]` | `InvalidRealloc` |
 | `realloc::payer` | `#[account(realloc::payer = field)]` | -- |

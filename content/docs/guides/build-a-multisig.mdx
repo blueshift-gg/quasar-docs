@@ -60,6 +60,7 @@ src/
 use quasar_lang::prelude::*;
 
 #[account(discriminator = 1)]
+#[seeds(b"multisig", creator: Address)]
 pub struct MultisigConfig<\'a> {
     pub creator: Address,
     pub threshold: u8,
@@ -72,7 +73,7 @@ pub struct MultisigConfig<\'a> {
 **Fixed fields** come first:
 - **`creator`** -- The multisig creator's address.
 - **`threshold`** -- Required approvals (the "M" in M-of-N).
-- **`bump`** -- PDA bump seed.
+- **`bump`** -- PDA bump seed used by existing-account verification.
 
 **Dynamic fields** follow:
 - **`label: String<\'a, 32>`** -- Human-readable label (max 32 bytes). Stored as a 4-byte length prefix followed by UTF-8 bytes, directly in the account buffer.
@@ -170,14 +171,17 @@ use {
 pub struct Create<\'info> {
     #[account(mut)]
     pub creator: Signer,
-    #[account(init, mut, payer = creator, seeds = [b"multisig", creator], bump)]
+    #[account(init, mut, payer = creator, address = MultisigConfig::seeds(creator.address()))]
     pub config: Account<MultisigConfig<\'info>>,
     pub rent: Sysvar<Rent>,
     pub system_program: Program<SystemProgram>,
 }
 ```
 
-PDA seeds `[b"multisig", creator]` give each creator one multisig. Note `Account<MultisigConfig<\'info>>` (not a reference) -- required for dynamic fields because the framework needs ownership to manage reallocation.
+`MultisigConfig::seeds(creator.address())` gives each creator one multisig and
+records the verified bump in `ctx.bumps.config`. Note
+`Account<MultisigConfig<\'info>>` (not a reference) -- required for dynamic
+fields because the framework needs ownership to manage reallocation.
 
 ### The handler
 
@@ -240,12 +244,16 @@ Threshold must be at least 1 and at most the signer count: zero would allow unap
 ```rust
 use {crate::state::MultisigConfig, quasar_lang::prelude::*};
 
+#[derive(Seeds)]
+#[seeds(b"vault", config: Address)]
+pub struct MultisigVaultPda;
+
 #[derive(Accounts)]
 pub struct Deposit<\'info> {
     #[account(mut)]
     pub depositor: Signer,
     pub config: Account<MultisigConfig<\'info>>,
-    #[account(mut, seeds = [b"vault", config], bump)]
+    #[account(mut, address = MultisigVaultPda::seeds(config.address()))]
     pub vault: UncheckedAccount,
     pub system_program: Program<SystemProgram>,
 }
@@ -261,7 +269,7 @@ impl<\'info> Deposit<\'info> {
 ```
 
 - **Anyone can deposit** -- the `depositor` need not be a configured signer.
-- **Vault PDA** seeded with `[b"vault", config]`, tying it to this multisig.
+- **Vault PDA** declared by `MultisigVaultPda` and parameterized by the config address.
 - **Config is read-only** here, included for PDA seed validation.
 
 Same pattern as the [vault guide](/docs/guides/build-a-vault) -- a system program transfer CPI.
@@ -272,6 +280,7 @@ Verify enough signers have approved, then transfer SOL from the vault. `instruct
 
 ```rust
 use {
+    super::deposit::MultisigVaultPda,
     crate::state::MultisigConfig,
     quasar_lang::{prelude::*, remaining::RemainingAccounts},
 };
@@ -280,12 +289,11 @@ use {
 pub struct ExecuteTransfer<\'info> {
     #[account(
         has_one = creator,
-        seeds = [b"multisig", creator],
-        bump = config.bump
+        address = MultisigConfig::seeds(creator.address())
     )]
     pub config: Account<MultisigConfig<\'info>>,
     pub creator: UncheckedAccount,
-    #[account(mut, seeds = [b"vault", config], bump)]
+    #[account(mut, address = MultisigVaultPda::seeds(config.address()))]
     pub vault: UncheckedAccount,
     #[account(mut)]
     pub recipient: UncheckedAccount,
@@ -326,10 +334,10 @@ impl<\'info> ExecuteTransfer<\'info> {
             return Err(ProgramError::MissingRequiredSignature);
         }
 
-        let seeds = bumps.vault_seeds();
+        let vault_signer = self.vault_signer(bumps);
         self.system_program
             .transfer(&self.vault, &self.recipient, amount)
-            .invoke_signed(&seeds)
+            .invoke_signed(&vault_signer)
     }
 }
 ```
@@ -350,8 +358,7 @@ pub struct SetLabel<\'info> {
     #[account(
         mut,
         has_one = creator,
-        seeds = [b"multisig", creator],
-        bump = config.bump
+        address = MultisigConfig::seeds(creator.address())
     )]
     pub config: Account<MultisigConfig<\'info>>,
     pub system_program: Program<SystemProgram>,

@@ -115,14 +115,14 @@ When a PDA owns tokens, pass the seeds to `invoke_signed`. From the escrow refun
 
 ```rust
 pub fn withdraw_tokens_and_close(&mut self, bumps: &RefundBumps) -> Result<(), ProgramError> {
-    let seeds = bumps.escrow_seeds();
+    let escrow_signer = self.escrow_signer(bumps);
 
     self.token_program
         .transfer(&self.vault_ta_a, &self.maker_ta_a, &self.escrow, self.vault_ta_a.amount())
-        .invoke_signed(&seeds)?;
+        .invoke_signed(&escrow_signer)?;
 
     self.vault_ta_a
         .close(&self.token_program, &self.maker, &self.escrow)
-        .invoke_signed(&seeds)
+        .invoke_signed(&escrow_signer)
 }
 ```

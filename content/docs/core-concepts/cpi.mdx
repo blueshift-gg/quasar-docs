@@ -56,23 +56,25 @@ self.vault_ta_a
 
 ## PDA Signing
 
-Use the auto-generated `*_seeds()` methods on the bumps struct. No manual seed construction:
+For fields bound with `address = Type::seeds(...)`, use the generated
+`<field>_signer` method on the accounts struct:
 
 ```rust
 pub fn withdraw_tokens_and_close(&mut self, bumps: &TakeBumps) -> Result<(), ProgramError> {
-    let seeds = bumps.escrow_seeds();
+    let escrow_signer = self.escrow_signer(bumps);
 
     self.token_program
         .transfer(&self.vault_ta_a, &self.taker_ta_a, &self.escrow, self.vault_ta_a.amount())
-        .invoke_signed(&seeds)?;
+        .invoke_signed(&escrow_signer)?;
 
     self.vault_ta_a
         .close(&self.token_program, &self.taker, &self.escrow)
-        .invoke_signed(&seeds)
+        .invoke_signed(&escrow_signer)
 }
 ```
 
-`bumps.escrow_seeds()` returns a `[Seed; N]` array with the full seed set including the bump byte. See [PDA](./pda) for how bumps are discovered and stored.
+The helper rebuilds the typed seed set and appends the verified bump from
+`TakeBumps`. See [PDA](./pda) for typed seed declarations and bump handling.
 
 ## declare_program!
 
