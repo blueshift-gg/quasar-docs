@@ -5,7 +5,7 @@ description: Method-style CPI calls, PDA signing, declare_program!, and events.
 
 CPI in Quasar is method-style -- you call methods on program types or account types and get back a `CpiCall` that you `.invoke()`. Everything is stack-allocated with const-generic sizes, no heap.
 
-## The Pattern
+## The pattern
 
 ```rust
 // No PDA signer
@@ -54,7 +54,7 @@ self.token_program
     .invoke_signed(&seeds)?;
 ```
 
-## PDA Signing
+## PDA signing
 
 For fields bound with `address = Type::seeds(...)`, use the generated
 `<field>_signer` method on the accounts struct:
@@ -132,7 +132,7 @@ impl EmitViaCpi {
 
 Use `emit!` for most indexing. Use `emit_cpi!` when event authenticity matters -- financial events, governance actions, anything clients need to trust.
 
-## Next Steps
+## Continue with typed CPIs
 
 - [Program Derived Addresses](./pda) -- PDA derivation and signing
 - [Accounts and Validation](./accounts-and-validation) -- the Bumps struct and seed configuration

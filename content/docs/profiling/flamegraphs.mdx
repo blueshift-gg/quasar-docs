@@ -13,7 +13,7 @@ Every `quasar profile` run generates a JSON profile and starts a local flamegrap
 
 The server forks into the background and auto-shuts down after 30 seconds of inactivity. If port 7777 is already in use, the profiler reuses the existing server.
 
-## Reading the Flamegraph
+## Read the flamegraph
 
 - **Width = cost** — wider bars consumed more CU
 - **Vertical stacking = call depth** — bottom is the entrypoint, each bar above is called by the bar below
@@ -25,7 +25,7 @@ What to look for:
 - **Plateaus** — a function as wide as its parent means the parent does nothing besides calling that child.
 - **Many thin bars** — small calls that add up. Consider inlining.
 
-## Diff View
+## Diff view
 
 ```bash
 quasar profile --diff my_program
@@ -33,7 +33,7 @@ quasar profile --diff my_program
 
 Overlays two flamegraphs, highlighting regressions in red and improvements in green. Runs in the foreground -- press Ctrl-C to stop.
 
-## Profile History
+## Profile history
 
 All profiles are stored as timestamped JSON files in `target/profile/profiles/`:
 

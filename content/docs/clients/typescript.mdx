@@ -80,7 +80,7 @@ const message = pipe(
 await signAndSendTransactionMessageWithSigners(message);
 ```
 
-## Account Decoding
+## Account decoding
 
 The client includes decoders for all `#[account]` types:
 
@@ -93,7 +93,7 @@ console.log("Maker:", escrow.maker.toBase58());
 console.log("Receive:", escrow.receive.toString());
 ```
 
-## PDA Derivation
+## PDA derivation
 
 A helper is generated for each unique seed pattern:
 
@@ -103,7 +103,7 @@ import { findEscrowPda } from "../target/client/typescript/quasar-escrow/web3.js
 const [escrowPda, bump] = findEscrowPda(makerPublicKey);
 ```
 
-## Type Mapping
+## Type mapping
 
 | Rust | TypeScript | Notes |
 |------|-----------|-------|

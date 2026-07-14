@@ -5,7 +5,7 @@ description: Instruction handlers, discriminators, zero-copy arguments, context 
 
 Instructions are functions inside a `#[program]` module. Each one is annotated with `#[instruction(discriminator = N)]`, which generates the discriminator matching, zero-copy argument parsing, and account context construction.
 
-## Defining Instructions
+## Define instructions
 
 ```rust
 #[program]
@@ -109,7 +109,7 @@ pub fn process(ctx: Ctx<Process>, data: &[u8]) -> Result<(), ProgramError> {
 
 Only one tail argument is allowed and it must be the last parameter. No length prefix -- the field gets everything that's left.
 
-## Context Types
+## Context types
 
 ### `Ctx<T>`
 
@@ -138,7 +138,7 @@ pub fn create(ctx: CtxWithRemaining<Create>, threshold: u8) -> Result<(), Progra
 
 `ctx.remaining_accounts()` returns the raw trailing-account accessor. Parse a homogeneous list into `Remaining<T, N>` at the instruction boundary so the handler receives at most `N` values that already satisfy `T`. Keep the raw accessor for heterogeneous tails that require explicit per-entry checks.
 
-## Instruction Data in Account Validation
+## Instruction data in account validation
 
 Use `#[instruction(...)]` on the accounts struct to access instruction arguments during account construction. This is useful when constraint expressions or init attributes need values from the instruction data:
 
@@ -153,7 +153,7 @@ pub struct UpdateProfile {
 
 The parameter names and types must match the instruction handler's signature.
 
-## Return Data
+## Return data
 
 To return data to the caller (useful for CPI return values or simulation), use a non-unit `Ok` type. The return type must have alignment 1 (Pod types):
 
@@ -170,7 +170,7 @@ The framework runs `close` operations before setting return data, so closed acco
 
 After the handler returns `Ok(())`, the framework runs the epilogue -- `close` operations execute for any accounts marked with `close(dest = destination)`. If the handler returns an error, the epilogue is skipped and the entire transaction rolls back.
 
-## Next Steps
+## Connect instructions to the rest of the program
 
 - [Accounts and Validation](./accounts-and-validation) -- account types and constraint attributes
 - [Program Derived Addresses](./pda) -- seeds, bumps, and PDA verification

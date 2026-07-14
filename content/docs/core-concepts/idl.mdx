@@ -5,7 +5,7 @@ description: How Quasar generates program interface descriptions and client code
 
 The IDL is a JSON file describing your program's interface -- instructions, accounts, events, types, and errors. Generated from your Rust source by the CLI, it drives TypeScript and Rust client generation, and is consumed by [`declare_program!`](./cpi#declare_program) for typed CPI at compile time.
 
-## What the IDL Contains
+## What the IDL contains
 
 ```json
 {
@@ -134,7 +134,8 @@ Instructions using `CtxWithRemaining` include a structured `remainingAccounts` c
 
 `kind: "append"` and `position: "afterDeclaredAccounts"` place these entries after the declared account list. `order: "preserveInput"` requires generated clients to retain caller order. The caller supplies each account meta and its signer and writable flags. `min: 0` permits an empty tail, while `max: null` means the IDL itself does not set a maximum. On-chain code can still impose a typed bound with `Remaining<T, N>`.
 
-The normalized v0.1 ABI baseline stores the same object under `remaining_accounts`; generated IDL uses the camel-cased `remainingAccounts` key shown above.
+The Rust schema field is named `remaining_accounts`; serialized IDL uses the
+camel-cased `remainingAccounts` key shown above.
 
 Accounts and events each list their name and discriminator. Event discriminators are prefixed with `0xFF` on the wire to distinguish them from instructions.
 
@@ -198,7 +199,7 @@ Bounded borrowed instruction arguments such as `#[max(32)] label: &str` project 
 { "code": 6000, "name": "InvalidAmount", "msg": "Invalid amount" }
 ```
 
-## Generating the IDL
+## Generate the IDL
 
 ```bash
 quasar idl path/to/program
@@ -240,7 +241,7 @@ let ix: Instruction = DepositInstruction {
 }.into();
 ```
 
-## Next Steps
+## Follow the schema downstream
 
 - [Program Structure](./program-structure) -- how the `#[program]` macro generates the dispatch table
 - [Instructions](./instructions) -- discriminators and argument handling

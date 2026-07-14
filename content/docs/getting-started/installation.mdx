@@ -3,7 +3,7 @@ title: Installation
 description: Install Quasar and set up your development environment.
 ---
 
-![alt](/images/installation.webp)
+![A terminal with the Quasar CLI and supported SBF toolchain installed](/images/installation.webp)
 
 **Quasar is in beta and has not been audited.** Do not use it in production with real funds.
 
@@ -65,8 +65,8 @@ cargo install sbpf-linker --version 0.1.9 --locked
 
 ## Editor setup
 
-Install [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer). Quasar programs use `#![no_std]` and `cfg(target_os = "solana")` -- the generated `Cargo.toml` configures `check-cfg` so rust-analyzer won't warn about either.
+Install [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer). Quasar programs use `#![no_std]` and `cfg(target_os = "solana")`; the generated `Cargo.toml` configures `check-cfg` so rust-analyzer won't warn about either.
 
-## Next steps
+## Build a program
 
 Head to the [Quickstart](./quickstart) to scaffold and build your first program.

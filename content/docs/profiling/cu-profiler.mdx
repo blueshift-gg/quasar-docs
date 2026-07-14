@@ -5,7 +5,7 @@ description: Static compute unit analysis with per-function breakdown and delta 
 
 `quasar profile` statically walks every sBPF instruction in your compiled binary. Each instruction = one compute unit, so the count directly maps to CU usage. Function names are resolved via DWARF debug info.
 
-## Running It
+## Run the profiler
 
 ```bash
 quasar profile                              # auto-builds with debug symbols
