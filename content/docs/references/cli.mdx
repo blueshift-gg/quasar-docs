@@ -51,28 +51,31 @@ quasar init my-app --test-language typescript --ts-sdk kit --template full
 
 ---
 
-### `quasar add --instruction`
+### `quasar add`
 
-Add a new instruction handler to the current project.
+Generate instructions, state accounts, or error enums in the current project.
 
 ```
-quasar add --instruction <NAME>
+quasar add [OPTIONS]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `-i, --instruction <NAME>` | Instruction name; hyphens become underscores, then the result must be a valid Rust identifier such as `transfer` or `create_pool` |
+| `-i, --instruction <NAME>` | Create `src/instructions/<name>.rs`, wire its module, and add an auto-discriminated entry to the `#[program]` module |
+| `-s, --state <NAME>` | Create or append an `#[account]` struct in `src/state.rs` using the next account discriminator |
+| `-e, --error <NAME>` | Create or append an `#[error_code]` enum in `src/errors.rs` |
 
-This command:
+At least one flag is required, and the flags can be combined. Names may contain
+hyphens; Quasar converts them to underscores before checking that they are valid
+Rust identifiers.
 
-1. Creates `src/instructions/<name>.rs` with an `Accounts` struct and handler method.
-2. Adds `mod <name>;` and `pub use <name>::*;` to `src/instructions/mod.rs`.
-3. Inserts a new auto-discriminated `#[instruction]` entry in the `#[program]` module.
-
-**Example:**
+**Examples:**
 
 ```bash
 quasar add --instruction withdraw
+quasar add --state vault
+quasar add --error access-error
+quasar add -i deposit -s vault -e vault-error
 ```
 
 Creates `src/instructions/withdraw.rs`:
