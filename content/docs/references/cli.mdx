@@ -152,9 +152,12 @@ quasar test [OPTIONS]
 | Flag | Description |
 |------|-------------|
 | `--debug` | Build with debug symbols before testing |
+| `--show-output` | For Cargo tests, forward `--show-output` to the test harness |
 | `-f, --filter <PATTERN>` | Only run tests whose name matches the pattern |
 | `-w, --watch` | Watch `src/` for changes and re-run tests automatically |
 | `--no-build` | Skip the build step (use existing binary) |
+| `--features <FEATURES>` | Cargo features to enable during the build step |
+| `--verbose` | Show the build and test commands as they run |
 
 Test framework behavior:
 
@@ -169,6 +172,9 @@ quasar test --filter deposit      # Only run tests matching "deposit"
 quasar test --watch               # Auto-test on changes
 quasar test --no-build            # Skip build, test existing binary
 quasar test --debug --filter pda  # Debug build, filtered tests
+quasar test --features "devnet"    # Build with Cargo features, then test
+quasar test --show-output         # Show output captured by Cargo tests
+quasar test --verbose             # Print the commands being run
 ```
 
 ---
