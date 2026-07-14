@@ -5,6 +5,13 @@ description: How Quasar uses unsafe Rust safely -- pointer casts, interior mutab
 
 Quasar uses `unsafe` for zero-copy account access, raw CPI syscalls, pointer arithmetic over the SVM input buffer, and `MaybeUninit` patterns for stack-allocated arrays. This page documents each pattern, its soundness argument, and its protections.
 
+<Callout type="warn" title="Evidence, not an audit">
+Quasar v0.1.0 has not been externally audited. Compile-time assertions, Miri,
+Kani, and integration tests cover named invariants and paths; they do not prove
+that every unsafe operation or complete program is sound. Do not use this beta
+release with real funds.
+</Callout>
+
 ## Unsafe inventory
 
 Five categories of `unsafe` in `quasar-lang`:
@@ -81,14 +88,31 @@ Quasar uses `const _: () = assert!(...)` to catch invariant violations at compil
 
 ## Miri validation
 
-All unsafe code paths are tested under Miri with Tree Borrows and symbolic alignment checking:
+Release CI runs the dedicated Miri integration suites for `quasar-lang`,
+`quasar-spl`, and `quasar-metadata` under the pinned
+`nightly-2026-03-27` toolchain:
 
 ```bash
-MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-symbolic-alignment-check" \
-  cargo +nightly miri test -p quasar-lang --test miri
+make test-miri-strict
 ```
 
-The test suite covers aliasing casts, CPI construction, event serialization, remaining accounts pointer arithmetic, and dynamic field boundary conditions.
+That target enables Tree Borrows, symbolic alignment checks, and strict
+provenance. The three suites exercise the unsafe operations represented by
+their tests, including aliasing casts, account layout access, CPI buffer
+construction, event serialization, remaining-account traversal, and dynamic
+field boundaries.
+
+The exact v0.1.0 evidence is reviewable in the
+[`quasar-lang` Miri suite](https://github.com/blueshift-gg/quasar/blob/d4af3fb0a8941ff5c6f9150771927b1d533a8479/lang/tests/miri.rs),
+[`quasar-spl` Miri suite](https://github.com/blueshift-gg/quasar/blob/d4af3fb0a8941ff5c6f9150771927b1d533a8479/spl/tests/miri.rs), and
+[`quasar-metadata` Miri suite](https://github.com/blueshift-gg/quasar/blob/d4af3fb0a8941ff5c6f9150771927b1d533a8479/metadata/tests/miri.rs).
+
+Miri cannot execute the generated SBF `extern "C"` entrypoint or SBF-only
+syscall and FFI paths such as `sol_invoke_signed_c`. A passing run therefore
+supports the tested host-executable paths under the selected aliasing model; it
+is not a proof of complete unsafe-code coverage. The release
+[`SECURITY.md`](https://github.com/blueshift-gg/quasar/blob/d4af3fb0a8941ff5c6f9150771927b1d533a8479/SECURITY.md#unsafe-code-and-verification)
+records the same boundary for Miri and Kani.
 
 ## Attack mitigations
 

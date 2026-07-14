@@ -1,29 +1,81 @@
 ---
-title: Benchmarks
-description: CU benchmarks and optimization strategies for Quasar programs.
+title: Tracked performance baselines
+description: Reproduce the compute-unit and binary-size ceilings enforced for Quasar v0.1.0.
 ---
 
-## Framework Comparison
+Quasar's release CI records runtime compute units and SBF binary size for three
+example programs. These numbers are regression ceilings for one fixed source
+and toolchain, not a general claim about every Quasar program.
 
-Standard vault program (PDA derivation + system transfer CPI for deposit, direct lamport manipulation for withdraw):
+<Callout type="info" title="Not a cross-framework benchmark">
+The v0.1.0 evidence set does not contain behaviorally identical Anchor or
+Pinocchio fixtures built and measured by the same harness. This page therefore
+does not publish a framework ranking. A defensible comparison would need the
+same state transitions, account checks, compiler tools, SVM version, and
+measurement method on every implementation.
+</Callout>
 
-| Framework | Deposit CU | Withdraw CU |
-|-----------|-----------|------------|
-| **Quasar** | **2,816** | **1,618** |
-| Pinocchio | 2,833 | 1,635 |
-| Anchor | ~5,500 | — |
+## v0.1.0 evidence set
 
-Quasar matches hand-written Pinocchio (-17 CU) while providing derive macros, auto-generated clients, and constraint validation. The gap from Anchor comes from zero-copy vs Borsh deserialization, compile-time codegen vs runtime dispatch, and `no_std` by default.
+- **Source:** release candidate
+  [`d4af3fb0`](https://github.com/blueshift-gg/quasar/tree/d4af3fb0a8941ff5c6f9150771927b1d533a8479)
+- **SBF build tools:** Solana platform-tools `v1.52`
+- **Harness:**
+  [`scripts/bench-tracked-programs.sh`](https://github.com/blueshift-gg/quasar/blob/d4af3fb0a8941ff5c6f9150771927b1d533a8479/scripts/bench-tracked-programs.sh)
+- **Checked-in ceilings:**
+  [`benchmarks/v0.1.0.env`](https://github.com/blueshift-gg/quasar/blob/d4af3fb0a8941ff5c6f9150771927b1d533a8479/benchmarks/v0.1.0.env)
+- **CI gate:** the tracked-benchmark job builds each example, runs its
+  QuasarSVM tests with one test thread, and rejects any CU or binary-size
+  increase above the checked-in value.
 
-## Measuring CU
+| Program | Runtime CU metrics | SBF size |
+|---|---|---:|
+| Vault | deposit 1,556; withdraw 392 | 5,536 bytes |
+| Escrow | make 21,035; take 29,256; refund 16,942 | 44,320 bytes |
+| Multisig | create 3,376; deposit 2,268; set label 2,212; execute transfer 2,744 | 26,504 bytes |
 
-**Static profiler** — deterministic instruction count from the binary's `.text` section. Fast iteration, per-function breakdown, but counts all instructions including unreachable branches:
+The CU values come from each example's QuasarSVM execution result. The size is
+the byte length of the compiled `.so`. They are absolute ceilings: a candidate
+may improve a metric, but an increase fails the gate and needs an explicit
+baseline review.
+
+## Reproduce the release baseline
+
+Check out the recorded source revision with the supported v0.1.0 Solana
+toolchain installed, then run:
+
+```bash
+make bench-tracked
+make compare-tracked
+```
+
+`bench-tracked` writes the captured values to
+`target/tracked-metrics.env`. `compare-tracked` captures them again and compares
+every key with `benchmarks/v0.1.0.env`. The script stops if a metric is missing,
+duplicated, non-numeric, or above its ceiling.
+
+Reproduction establishes whether that revision and toolchain produce the
+recorded fixtures. It does not predict the cost of a different program or a
+future SVM/toolchain release.
+
+## Measure your own program
+
+The static profiler and runtime execution answer different questions.
+
+### Static profile
 
 ```bash
 quasar profile
 ```
 
-**Runtime measurement** — actual CU consumed by the SVM. Exact match to on-chain behavior. Use QuasarSVM or Mollusk:
+The profiler attributes instructions in the binary's `.text` section to
+functions. It is deterministic for one binary and useful for finding large
+call paths, but it can include instructions on branches that a particular
+transaction never executes.
+
+### Runtime measurement
+
+QuasarSVM and Mollusk report the units consumed by the instruction they execute:
 
 ```rust
 let result = svm.process_instruction(&instruction, &accounts);
@@ -31,19 +83,21 @@ result.assert_success();
 println!("CU: {}", result.compute_units_consumed);
 ```
 
-Both are useful: the profiler for fast iteration and hotspot identification, runtime for precise on-chain-matching numbers.
+Pin the program binary, accounts, instruction data, SVM dependency, and
+toolchain when comparing runs. A local SVM is a practical regression harness;
+cluster software and enabled features can still change on-chain behavior.
 
-## Optimization Checklist
+## Optimize against evidence
 
-**Inline instruction handlers** — `#[inline(always)]` on handlers (the default in scaffolded code). Removing it can add 50-100 CU.
-
-**Minimize CPI** — each cross-program invocation has fixed overhead. When you own the accounts, direct lamport manipulation is cheaper than a system program transfer.
-
-**Store bumps** — `find_program_address` searches for the bump. A typed-seeds
-account with a `bump: u8` field can verify existing accounts through the stored
-bump after initialization.
-
-**Use `--expand` and `--watch`** — find the widest bars in the flamegraph, optimize them, and catch regressions as you edit:
+- Start with the runtime path whose CU matters to users, then use the static
+  profile to find its likely hotspots.
+- Prefer direct state changes only when your program owns the accounts and the
+  authority model permits them; CPI overhead is sometimes the cost of crossing
+  a required trust boundary.
+- Store verified PDA bumps when the account layout and upgrade policy allow the
+  stored-bump verification path.
+- Keep a fixed fixture and fail CI on regressions instead of relying on one-off
+  local numbers.
 
 ```bash
 quasar profile --watch --expand
