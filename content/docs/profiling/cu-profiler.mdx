@@ -1,54 +1,105 @@
 ---
 title: CU Profiler
-description: Static compute unit analysis with per-function breakdown and delta tracking.
+description: Track static sBPF cost and deploy binary size with checked-in budgets.
 ---
 
-`quasar profile` statically walks every sBPF instruction in your compiled binary. Each instruction = one compute unit, so the count directly maps to CU usage. Function names are resolved via DWARF debug info.
+`quasar profile` reads an unstripped sBPF binary, resolves its call graph, and
+assigns each function a static instruction cost. Use it to catch compiler and
+code-generation regressions before they reach runtime tests.
 
-## Run the profiler
+## Profile a program
 
 ```bash
-quasar profile                              # auto-builds with debug symbols
-quasar profile target/deploy/my_program.so  # explicit ELF path
+quasar profile
+quasar profile target/deploy/debug/my_program.so.debug
 ```
 
-Debug symbols are required -- the profiler errors on stripped binaries. Use the unstripped binary from `target/sbf-solana-solana/release/` if needed.
+With no path, Quasar builds a debug artifact and profiles it. A stripped ELF
+cannot provide function attribution. Pass the `.so.debug` file under
+`target/deploy/debug/` when selecting an artifact yourself.
 
-## Output
+The terminal report lists the highest-cost functions:
 
-First run shows the top 5 functions by cost:
-
-```
+```text
   my_program  2,816 CU
      1,200  42.6%  Initialize::verify
        800  28.4%  Deposit::process
-       400  14.2%  entrypoint
-       300  10.6%  Withdraw::process
-       116   4.1%  +3 more (--expand)
+       816  29.0%  +3 more (--expand)
 ```
 
-On subsequent runs, the profiler loads the previous baseline from `target/profile/.last-profile.<program>` and shows deltas -- red `(+N)` for regressions, green `(-N)` for improvements:
+Use `--expand` for the complete table. Quasar stores snapshots under
+`target/profile/` and starts a flamegraph viewer on `127.0.0.1:7777`.
 
-```
-  my_program  2,816 CU (+42)
-     1,200 (+200)   5.0%  Initialize::verify
-       800 (-158)   3.0%  Deposit::process
-```
+## Check in a budget
 
-## Flags
+Generate `quasar-budget.toml` after reviewing a representative release build:
 
-**`--expand`** — Full function table with bar charts:
-
-```
-  my_program  2,816 CU
-     1,200  42.6%  ████████████████████  Initialize::verify
-       800  28.4%  █████████████░░░░░░░  Deposit::process
-       400  14.2%  ██████░░░░░░░░░░░░░░  entrypoint
-  6 functions, 2,816 CU total
+```bash
+quasar profile --write-budget
 ```
 
-**`--watch`** (`-w`) — Re-profiles on every source file change. Combine with `--expand` for a live CU dashboard.
+Quasar adds five percent headroom by default. Choose another percentage with
+`--headroom`:
 
-**`--diff <PROGRAM>`** — Opens the flamegraph diff view in the foreground. Press Ctrl-C to stop.
+```bash
+quasar profile --write-budget --headroom 10
+```
 
-**`--share`** — Uploads the profile to a public GitHub Gist (requires `gh` CLI).
+The file contains one table per program:
+
+```toml
+version = 1
+
+[program.my_program]
+binary_size = 59430
+total_cu = 2957
+
+[program.my_program.functions]
+"Initialize::verify" = 1260
+"Deposit::process" = 840
+```
+
+`binary_size` measures the stripped deploy ELF. Function and total ceilings use
+the static profile. Quasar preserves other program tables when it updates one
+entry.
+
+Review the generated values before committing them. Headroom absorbs small
+codegen movement; it should not hide a regression you have not explained.
+
+## Enforce the budget
+
+```bash
+quasar profile --assert-budget
+```
+
+Quasar evaluates every recorded ceiling and reports all violations in stable
+order. It exits with code 2 when the binary, total, or a named function exceeds
+its maximum. Missing, malformed, and unsupported budget files fail instead of
+creating a new baseline.
+
+CI can consume deterministic JSON:
+
+```bash
+quasar profile --assert-budget --json > profile.json
+```
+
+`--json` does not start the flamegraph server. The report includes the measured
+binary size, static total, function costs, budget status, and each violation.
+
+## Read the number correctly
+
+The profile total estimates the sBPF instructions reached through the resolved
+call graph. It does not reproduce transaction compute consumption. Solana also
+charges for syscalls and runtime work, and a transaction may take one branch of
+the graph.
+
+Use the profile budget for code and binary drift. Use QuasarSVM or validator
+tests to measure runtime CU for concrete instructions and account inputs.
+
+## Other modes
+
+- `--watch` rebuilds after changes under `src/`.
+- `--diff <PROGRAM>` opens the stored snapshot comparison.
+- `--share` uploads the profile to a public GitHub Gist.
+
+These interactive modes cannot run with budget assertions or JSON output.

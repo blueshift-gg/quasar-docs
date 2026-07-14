@@ -70,6 +70,31 @@ This order matters. For example, a business constraint can read `vault.balance`
 because the owner and `Vault` layout were checked when `Account<Vault>` was
 constructed.
 
+## Inspect the generated plan
+
+The compiler writes its resolved account mechanics into the IDL under the
+versioned `quasar:validationPlan` extension. Print the review-oriented form
+with:
+
+```bash
+quasar build
+quasar audit
+```
+
+The report lists each account's access flags, wrapper, load mode, and ordered
+work before load, after load, and after the handler. It also shows rent-fetch
+behavior for instructions that initialize or resize accounts.
+
+Use JSON when a review tool needs the same data:
+
+```bash
+quasar audit --json > validation-plan.json
+```
+
+The plan answers “what code did the compiler generate?” It cannot answer
+whether the declared checks match the protocol's intended authority model.
+Review both the accounts struct and the plan.
+
 ## Account data stays borrowed
 
 `Account<T>` does not deserialize account bytes into a separate Rust value. The

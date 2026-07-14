@@ -1,5 +1,5 @@
 {
   "title": "Guides",
   "icon": "GraduationCap",
-  "pages": ["build-a-vault", "build-an-escrow", "build-a-multisig"]
+  "pages": ["deploy-and-verify", "build-a-vault", "build-an-escrow", "build-a-multisig"]
 }

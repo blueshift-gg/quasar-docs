@@ -1,116 +1,122 @@
 ---
 title: TypeScript Client
-description: Auto-generated TypeScript clients for interacting with Quasar programs.
+description: Generate typed Web3.js v3 and Kit clients from a Quasar IDL.
 ---
 
-![Typescript Client](/images/typescript-client.webp)
+![TypeScript Client](/images/typescript-client.webp)
 
-Quasar generates two TypeScript clients from the same IDL: one for `@solana/web3.js` v2 and one for `@solana/kit`. Both include typed instruction builders, account decoders, event parsers, and PDA derivation helpers.
+Quasar generates Web3.js v3 and Kit clients from the same IDL. Each client includes instruction builders, account decoders, event parsers, PDA helpers, and the program address.
 
-## Generating
+## Generate a client
 
 ```bash
-quasar build # Build + IDL + Rust client + languages in [clients].languages
+# Build the program and generate every language in [clients].languages.
+quasar build
 
+# Regenerate the IDL without compiling the SBF program.
 quasar idl .
+
+# Generate TypeScript from an existing IDL.
 quasar client target/idl/my_program.json --lang typescript
 ```
 
-The second form generates the IDL and standalone Rust client first, then generates TypeScript from that IDL without compiling the SBF program.
+The generated files live under the program name:
 
-Output:
-
-```
-target/client/typescript/<name>/
-  web3.ts           # @solana/web3.js v2
-  kit.ts            # @solana/kit
+```text
+target/client/typescript/<program-name>/
+  web3.ts
+  kit.ts
   package.json
 ```
 
-Files are regenerated on every build -- don't edit them manually.
+Quasar replaces these files when it regenerates the client. Keep application code outside this directory.
 
-## Web3.js
+## Web3.js v3
+
+The Web3.js client uses `Address` and `TransactionInstruction` from `@solana/web3.js`:
 
 ```typescript
-import { make } from "../target/client/typescript/quasar-escrow/web3.js";
-import { Connection, Keypair, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
+import { Address } from "@solana/web3.js";
+import { QuasarEscrowClient } from "../target/client/typescript/quasar-escrow/web3.js";
 
-const makeIx = make({
-  maker: maker.publicKey,
-  escrow: escrowPda,
-  mintA, mintB,
-  makerTaA, makerTaB, vaultTaA,
-  rent: SYSVAR_RENT_PUBKEY,
-  tokenProgram: TOKEN_PROGRAM_ID,
-  systemProgram: SystemProgram.programId,
-  deposit: 1000000n,
-  receive: 500000n,
+const client = new QuasarEscrowClient();
+
+const instruction = await client.createMakeInstruction({
+  maker,
+  mintA,
+  mintB,
+  makerTaA,
+  makerTaB,
+  vaultTaA,
+  deposit: 1_000_000n,
+  receive: 500_000n,
 });
 
-const tx = new Transaction().add(makeIx);
-await sendAndConfirmTransaction(connection, tx, [maker]);
+const programAddress: Address = QuasarEscrowClient.programId;
 ```
 
-Each function takes a single object with named fields -- accounts as `PublicKey`, arguments as their natural TypeScript types (`bigint` for `u64`/`i64`, `number` for smaller integers, `boolean` for `bool`).
+Builders accept one named input object. Quasar fills constant accounts and derives IDL-backed PDAs. A builder returns a promise when account resolution requires a PDA or account data.
 
 ## Kit
 
-Same API shape, different types:
+The Kit client exposes the same program surface with Kit instruction and address types:
 
 ```typescript
-import { make } from "../target/client/typescript/quasar-escrow/kit.js";
-import { createSolanaRpc, address, pipe, createTransactionMessage,
-         setTransactionMessageFeePayer, appendTransactionMessageInstruction,
-         signAndSendTransactionMessageWithSigners } from "@solana/kit";
+import { PROGRAM_ADDRESS, QuasarEscrowClient } from "../target/client/typescript/quasar-escrow/kit.js";
 
-const makeIx = make({
-  maker: address("..."),
-  escrow: address("..."),
-  // ...
-  deposit: 1000000n,
-  receive: 500000n,
+const client = new QuasarEscrowClient();
+
+const instruction = await client.createMakeInstruction({
+  maker,
+  mintA,
+  mintB,
+  makerTaA,
+  makerTaB,
+  vaultTaA,
+  deposit: 1_000_000n,
+  receive: 500_000n,
 });
 
-const message = pipe(
-  createTransactionMessage({ version: 0 }),
-  (msg) => setTransactionMessageFeePayer(makerAddress, msg),
-  (msg) => appendTransactionMessageInstruction(makeIx, msg),
-);
-
-await signAndSendTransactionMessageWithSigners(message);
+console.log(PROGRAM_ADDRESS);
 ```
 
-## Account decoding
+Choose the client that matches the SDK used by the rest of your application. Do not mix Web3.js and Kit address or instruction types in one call.
 
-The client includes decoders for all `#[account]` types:
+## Decode an account
+
+Every `#[account]` type has a strict decoder. Pass the raw account bytes, including the discriminator:
 
 ```typescript
-import { decodeEscrow } from "../target/client/typescript/quasar-escrow/web3.js";
+const client = new QuasarEscrowClient();
+const escrow = client.decodeEscrow(accountInfo.data);
 
-const accountInfo = await connection.getAccountInfo(escrowPda);
-const escrow = decodeEscrow(accountInfo.data);
-console.log("Maker:", escrow.maker.toBase58());
-console.log("Receive:", escrow.receive.toString());
+console.log(escrow.maker);
+console.log(escrow.receive);
 ```
 
-## PDA derivation
+The decoder rejects the wrong discriminator, truncated data, and trailing bytes.
 
-A helper is generated for each unique seed pattern:
+## Derive a PDA
+
+Quasar emits one helper for each unique IDL seed pattern:
 
 ```typescript
-import { findEscrowPda } from "../target/client/typescript/quasar-escrow/web3.js";
+import { findEscrowAddress } from "../target/client/typescript/quasar-escrow/web3.js";
 
-const [escrowPda, bump] = findEscrowPda(makerPublicKey);
+const escrowAddress = await findEscrowAddress(maker);
 ```
+
+The helper returns the derived address. Instruction builders call the same derivation logic when a PDA account can be resolved from their inputs.
 
 ## Type mapping
 
-| Rust | TypeScript | Notes |
-|------|-----------|-------|
-| `u8`, `u16`, `u32`, `i8`, `i16`, `i32` | `number` | |
-| `u64`, `u128`, `i64`, `i128` | `bigint` | |
-| `bool` | `boolean` | |
-| `Address` | `PublicKey` (web3.js) / `Address` (kit) | 32 bytes |
+| Rust | TypeScript |
+| --- | --- |
+| `u8`, `u16`, `u32`, `i8`, `i16`, `i32` | `number` |
+| `u64`, `u128`, `i64`, `i128` | `bigint` |
+| `bool` | `boolean` |
+| `Address` | `Address` |
+| `[T; N]` | fixed-length tuple |
+| `Vec<T>` | `T[]` |
 
-To execute generated instructions against a local SVM, continue to
-[QuasarSVM for TypeScript](/docs/testing/quasarsvm-typescript).
+See [QuasarSVM for TypeScript](/docs/testing/quasarsvm-typescript) to execute generated instructions without starting a validator.

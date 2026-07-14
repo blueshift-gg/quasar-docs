@@ -83,9 +83,13 @@ needs a funded signer and a cluster. When the program is ready for devnet:
 quasar deploy --url devnet
 ```
 
+Before deploying, commit `quasar.lock.json` and review the post-deploy manifest.
+The [deployment guide](/docs/guides/deploy-and-verify) covers both steps.
+
 <Cards>
   <Card title="Program structure" href="/docs/core-concepts/program-structure" description="See how entrypoints, handlers, account contexts, and modules fit together." />
   <Card title="Accounts and validation" href="/docs/core-concepts/accounts-and-validation" description="Learn what Quasar checks before your handler receives an account view." />
   <Card title="Testing choices" href="/docs/testing/overview" description="Compare QuasarSVM, Mollusk, Rust, and TypeScript test paths." />
+  <Card title="Deploy and verify" href="/docs/guides/deploy-and-verify" description="Check the wire lock, deployed bytes, authority, and manifest." />
   <Card title="CLI reference" href="/docs/references/cli" description="Find every init, build, test, lint, profile, and deploy option." />
 </Cards>

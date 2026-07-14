@@ -1,0 +1,98 @@
+---
+title: Deploy and verify a program
+description: Lock the wire format, deploy reviewed bytes, and record what the cluster accepted.
+---
+
+Quasar checks the program before and after `solana program deploy`. The preflight
+check protects instruction discriminators. The post-deploy check compares the
+cluster's program bytes with your local ELF and records the result.
+
+<Callout type="warn" title="Start on devnet">
+Quasar v0.1.0 has not received an external audit. Use this workflow to test
+deployment controls, not to justify holding real funds.
+</Callout>
+
+## 1. Lock the wire format
+
+```bash
+quasar lint --update-lock
+git add quasar.lock.json
+```
+
+Commit `quasar.lock.json` with the program change. Quasar refuses to deploy a
+program that uses generated instruction discriminators without this file.
+`--skip-build` does not bypass the check.
+
+Run the strict lint before you deploy:
+
+```bash
+quasar lint --strict
+```
+
+## 2. Deploy
+
+```bash
+quasar deploy --url devnet
+```
+
+Quasar builds the release ELF, runs the deploy preflight, and invokes the Solana
+CLI. It then:
+
+1. reads the deployed program ID and upgrade authority;
+2. dumps the program bytes from the selected cluster;
+3. compares their SHA-256 hash with the local ELF; and
+4. writes `target/deploy/<program>-deployment.json`.
+
+Pass the authority keypair when you want Quasar to check its address:
+
+```bash
+quasar deploy --url devnet --upgrade-authority ~/.config/solana/id.json
+```
+
+The manifest records the program ID, resolved RPC target, ELF hash, IDL and ABI
+hashes, source revision, upgrade authority, program-data address, and deploy
+slot. A source revision ending in `-dirty` means the build came from a worktree
+with uncommitted changes. Keep the manifest with the deployment evidence for
+the release. A later deploy overwrites the default manifest with the new
+observed state.
+
+## 3. Verify again
+
+Use `quasar verify` after changing RPC providers, handing a deployment to
+another operator, or reviewing an existing cluster state:
+
+```bash
+quasar verify --url devnet
+```
+
+The command derives the program ID from the project keypair, finds the local
+ELF and generated IDL, and validates the default deployment manifest when it
+exists. When `--url` is absent, Quasar resolves the RPC URL from the Solana CLI
+configuration and uses that target for every read. You can supply each input
+when verifying copied artifacts:
+
+```bash
+quasar verify \
+  --program-id <ADDRESS> \
+  --elf-path artifacts/program.so \
+  --manifest artifacts/program-deployment.json \
+  --url https://api.devnet.solana.com
+```
+
+`quasar verify` fails if the program ID, deployed bytes, IDL hash, ABI hash,
+authority, program-data address, cluster, or deploy slot differs from the
+manifest. It cannot prove that the source is safe or that the chosen authority
+should control upgrades.
+
+## Emergency bypass
+
+`quasar deploy --skip-verify` skips the byte comparison and does not write a
+manifest. Use it only when the RPC cannot serve `program show` or `program
+dump`, then run `quasar verify` against a healthy RPC before treating the
+deployment as complete.
+
+<Cards>
+  <Card title="CLI reference" href="/docs/references/cli" description="See every deploy and verify flag." />
+  <Card title="Accounts and validation" href="/docs/core-concepts/accounts-and-validation" description="Inspect the compiler's validation plan before deployment." />
+  <Card title="Safety model" href="/docs/zero-copy/safety-model" description="Review the v0.1.0 trust boundary and evidence." />
+</Cards>
