@@ -36,27 +36,30 @@ Logic lives in `impl` methods on the accounts struct. The `#[program]` block is 
 
 ```rust
 #[derive(Accounts)]
-pub struct Take<'info> {
-    pub taker: &'info mut Signer,
+pub struct Take {
+    #[account(mut)]
+    pub taker: Signer,
     #[account(
+        mut,
         has_one = maker,
         constraint = escrow.receive > 0,
         close = taker,
         seeds = [b"escrow", maker],
         bump = escrow.bump
     )]
-    pub escrow: &'info mut Account<Escrow>,
-    pub maker: &'info mut UncheckedAccount,
-    pub token_program: &'info Program<Token>,
-    pub system_program: &'info Program<System>,
+    pub escrow: Account<Escrow>,
+    #[account(mut)]
+    pub maker: UncheckedAccount,
+    pub token_program: Program<Token>,
+    pub system_program: Program<System>,
 }
 ```
 
 | Anchor | Quasar |
 |--------|--------|
-| `Signer<'info>` | `&'info Signer` or `&'info mut Signer` |
-| `Account<'info, T>` | `&'info Account<T>` or `&'info mut Account<T>` |
-| `#[account(mut)]` attribute | `&'info mut` in the type |
+| `Signer<'info>` | `Signer` |
+| `Account<'info, T>` | `Account<T>` |
+| `#[account(mut)]` attribute | `#[account(mut)]` attribute |
 | `seeds = [b"escrow", maker.key().as_ref()]` | `seeds = [b"escrow", maker]` -- field name directly |
 
 ## Account types
@@ -85,7 +88,7 @@ Method-style calls instead of `CpiContext`:
 ```rust
 // Transfer tokens (no PDA signer)
 self.token_program
-    .transfer(self.maker_ta_a, self.vault_ta_a, self.maker, amount)
+    .transfer(&self.maker_ta_a, &self.vault_ta_a, &self.maker, amount)
     .invoke()
 ```
 
@@ -94,11 +97,11 @@ self.token_program
 let seeds = bumps.escrow_seeds();
 
 self.token_program
-    .transfer(self.vault_ta_a, self.taker_ta_a, self.escrow, amount)
+    .transfer(&self.vault_ta_a, &self.taker_ta_a, &self.escrow, amount)
     .invoke_signed(&seeds)?;
 
 self.vault_ta_a
-    .close(self.token_program, self.taker, self.escrow)
+    .close(&self.token_program, &self.taker, &self.escrow)
     .invoke_signed(&seeds)
 ```
 
@@ -165,8 +168,8 @@ Use `log()` instead of `println!()` for on-chain logging.
 | `anchor_lang::prelude::*` | `quasar_lang::prelude::*` |
 | `Context<T>` | `Ctx<T>` |
 | `Result<()>` | `Result<(), ProgramError>` |
-| `Signer<'info>` | `&'info Signer` |
-| `#[account(mut)]` | `&'info mut` |
+| `Signer<'info>` | `Signer` |
+| `#[account(mut)]` | `#[account(mut)]` |
 | `#[account]` | `#[account(discriminator = N)]` |
 | Discriminator optional | `#[instruction(discriminator = N)]` required |
 | `CpiContext::new(...)` | `.transfer(...).invoke()` |

@@ -144,10 +144,11 @@ Use `#[instruction(...)]` on the accounts struct to access instruction arguments
 ```rust
 #[derive(Accounts)]
 #[instruction(name: String<32>, symbol: String<10>)]
-pub struct CreateNft<'info> {
+pub struct CreateNft {
     #[account(init, payer = authority, metadata::name = name, metadata::symbol = symbol)]
-    pub metadata: &'info mut Account<Metadata>,
-    pub authority: &'info mut Signer,
+    pub metadata: Account<Metadata>,
+    #[account(mut)]
+    pub authority: Signer,
 }
 ```
 

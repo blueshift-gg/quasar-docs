@@ -14,7 +14,7 @@ When you do need a duplicate (rare), opt in with `#[account(dup)]` and a `/// CH
 ```rust
 /// CHECK: Same authority used as both source and destination signer.
 #[account(dup)]
-pub authority_alias: &'info Signer,
+pub authority_alias: Signer,
 ```
 
 ## Account Types
@@ -33,23 +33,22 @@ pub authority_alias: &'info Signer,
 Any type can be wrapped in `Option` -- an all-zero address is treated as `None`:
 
 ```rust
-pub optional_authority: Option<&'info Signer>,
+pub optional_authority: Option<Signer>,
 ```
 
 ## Mutability
 
-Two ways to mark an account as mutable:
+Account wrapper fields are owned values. Mark a field writable with the
+`#[account(mut)]` attribute:
 
 ```rust
-// 1. In the type (preferred) -- &mut means writable
-pub vault: &'info mut Account<Vault>,
-
-// 2. Via attribute
 #[account(mut)]
-pub vault: &'info Account<Vault>,
+pub vault: Account<Vault>,
 ```
 
-Read-only is `&'info T`. If an account is mutable but the transaction doesn't pass it as writable, parsing fails with `ProgramError::Immutable`.
+Fields without `#[account(mut)]` are read-only unless an operation such as
+`init` already requires writability. If a mutable account is not writable in
+the transaction, parsing fails with `ProgramError::Immutable`.
 
 ## Interfaces
 
@@ -77,11 +76,13 @@ impl ProgramInterface for TokenInterface {
 
 ```rust
 #[derive(Accounts)]
-pub struct Transfer<'info> {
-    pub authority: &'info Signer,
-    pub from: &'info mut InterfaceAccount<Token>,
-    pub to: &'info mut InterfaceAccount<Token>,
-    pub token_program: &'info Interface<TokenInterface>,
+pub struct Transfer {
+    pub authority: Signer,
+    #[account(mut)]
+    pub from: InterfaceAccount<Token>,
+    #[account(mut)]
+    pub to: InterfaceAccount<Token>,
+    pub token_program: Interface<TokenInterface>,
 }
 ```
 
@@ -212,17 +213,19 @@ Both need a payer. If your struct has a field named `payer`, it's auto-detected.
 ```rust
 // payer auto-detected from the `payer` field
 #[account(init, seeds = [b"escrow", payer], bump)]
-pub escrow: &'info mut Account<Escrow>,
-pub payer: &'info mut Signer,
+pub escrow: Account<Escrow>,
+#[account(mut)]
+pub payer: Signer,
 
 // explicit payer when the field has a different name
 #[account(init, payer = maker, seeds = [b"escrow", maker], bump)]
-pub escrow: &'info mut Account<Escrow>,
-pub maker: &'info mut Signer,
+pub escrow: Account<Escrow>,
+#[account(mut)]
+pub maker: Signer,
 
 // init_if_needed for token accounts
 #[account(init_if_needed, payer = taker, token::mint = mint_a, token::authority = taker)]
-pub taker_ta_a: &'info mut Account<Token>,
+pub taker_ta_a: Account<Token>,
 ```
 
 ### `seeds` / `bump`
@@ -234,11 +237,11 @@ Use `bump` alone on `init` to find the canonical bump (calls `find_program_addre
 ```rust
 // First time: find and store the bump
 #[account(init, payer = maker, seeds = [b"escrow", maker], bump)]
-pub escrow: &'info mut Account<Escrow>,
+pub escrow: Account<Escrow>,
 
 // Later: use the stored bump (cheaper)
-#[account(seeds = [b"escrow", maker], bump = escrow.bump)]
-pub escrow: &'info mut Account<Escrow>,
+#[account(mut, seeds = [b"escrow", maker], bump = escrow.bump)]
+pub escrow: Account<Escrow>,
 ```
 
 Seed expressions that reference account fields are automatically converted to their address bytes -- write `maker` not `maker.address().as_ref()`. You can also use byte literals (`b"prefix"`), integer bytes (`&vault_id.to_le_bytes()`), or any `&[u8]` expression.
@@ -248,10 +251,10 @@ Seed expressions that reference account fields are automatically converted to th
 Checks that a field stored in the account's data matches the address of another account in the struct. The field names must match -- if your account has a `maker: Address` field, then `has_one = maker` checks `escrow.maker == maker.address()`:
 
 ```rust
-#[account(has_one = maker, has_one = mint)]
-pub escrow: &'info mut Account<Escrow>,
-pub maker: &'info Signer,
-pub mint: &'info Account<Mint>,
+#[account(mut, has_one = maker, has_one = mint)]
+pub escrow: Account<Escrow>,
+pub maker: Signer,
+pub mint: Account<Mint>,
 ```
 
 ### `constraint`
@@ -271,7 +274,7 @@ Validates that the account's address matches a constant or expression exactly. G
 const ADMIN: Address = address!("Admin111111111111111111111111111111111111111");
 
 #[account(address = ADMIN)]
-pub admin: &'info Signer,
+pub admin: Signer,
 ```
 
 ### Custom errors with `@`
@@ -280,11 +283,12 @@ pub admin: &'info Signer,
 
 ```rust
 #[account(
+    mut,
     has_one = maker @ MyError::InvalidMaker,
     constraint = escrow.receive > 0 @ MyError::ZeroReceiveAmount,
     address = ADMIN @ MyError::Unauthorized,
 )]
-pub escrow: &'info mut Account<Escrow>,
+pub escrow: Account<Escrow>,
 ```
 
 Without `@`, the defaults are `HasOneMismatch`, `ConstraintViolation`, and `AddressMismatch`.
@@ -296,8 +300,8 @@ Closes an account after the instruction handler returns. Zeros the discriminator
 Because `close` runs in the epilogue (after your handler), you can still read the account's data during execution:
 
 ```rust
-#[account(close = taker, seeds = [b"escrow", maker], bump = escrow.bump)]
-pub escrow: &'info mut Account<Escrow>,
+#[account(mut, close = taker, seeds = [b"escrow", maker], bump = escrow.bump)]
+pub escrow: Account<Escrow>,
 ```
 
 ### `realloc`
@@ -316,15 +320,15 @@ The `quasar-spl` crate provides specialized init attributes for SPL token accoun
 ```rust
 // Token account -- initialized with a specific mint and authority
 #[account(init, payer = payer, token::mint = mint, token::authority = authority)]
-pub vault: &'info mut Account<Token>,
+pub vault: Account<Token>,
 
 // Mint -- initialized with decimals and mint authority
 #[account(init, payer = payer, mint::decimals = 6, mint::authority = authority)]
-pub mint: &'info mut Account<Mint>,
+pub mint: Account<Mint>,
 
 // Associated token account -- derived from mint + owner
 #[account(init, payer = payer, associated_token::mint = mint, associated_token::authority = owner)]
-pub ata: &'info mut Account<Token>,
+pub ata: Account<Token>,
 ```
 
 See the [Account Constraints Reference](/docs/references/account-constraints) for the full list including `mint::freeze_authority`, `metadata::*`, and `master_edition::*` attributes.
@@ -351,11 +355,11 @@ pub fn withdraw_tokens_and_close(&mut self, bumps: &TakeBumps) -> Result<(), Pro
     let seeds = bumps.escrow_seeds();
 
     self.token_program
-        .transfer(self.vault_ta_a, self.taker_ta_a, self.escrow, self.vault_ta_a.amount())
+        .transfer(&self.vault_ta_a, &self.taker_ta_a, &self.escrow, self.vault_ta_a.amount())
         .invoke_signed(&seeds)?;
 
     self.vault_ta_a
-        .close(self.token_program, self.taker, self.escrow)
+        .close(&self.token_program, &self.taker, &self.escrow)
         .invoke_signed(&seeds)
 }
 ```

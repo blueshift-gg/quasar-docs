@@ -17,7 +17,7 @@ Every field in a `#[derive(Accounts)]` struct must use one of these wrapper type
 | `Interface<T>` | Executable + multi-address | Token program (SPL / Token-2022) |
 | `InterfaceAccount<T>` | Multi-owner + discriminator | Token/Mint accounts across programs |
 | `Sysvar<T>` | Address matches sysvar ID | Clock, Rent |
-| `Option<&'info T>` | Presence check via sentinel | Optional accounts |
+| `Option<T>` | Presence check via sentinel | Optional accounts |
 
 ## `Account<T>`
 
@@ -49,10 +49,10 @@ pub struct Vault {
 }
 
 #[derive(Accounts)]
-pub struct Deposit<'info> {
+pub struct Deposit {
     #[account(mut, has_one = authority)]
-    pub vault: &'info mut Account<Vault>,
-    pub authority: &'info Signer,
+    pub vault: Account<Vault>,
+    pub authority: Signer,
 }
 ```
 
@@ -81,7 +81,7 @@ pub struct Profile<'a> {
 #[derive(Accounts)]
 pub struct UpdateProfile<'info> {
     #[account(mut)]
-    pub profile: &'info mut Account<Profile<'info>>,
+    pub profile: Account<Profile<'info>>,
 }
 ```
 
@@ -115,10 +115,10 @@ pub struct Signer {
 
 ```rust
 #[derive(Accounts)]
-pub struct Initialize<'info> {
+pub struct Initialize {
     #[account(mut)]
-    pub payer: &'info Signer,
-    pub system_program: &'info Program<System>,
+    pub payer: Signer,
+    pub system_program: Program<System>,
 }
 ```
 
@@ -141,10 +141,10 @@ pub struct UncheckedAccount {
 
 ```rust
 #[derive(Accounts)]
-pub struct ForwardCpi<'info> {
+pub struct ForwardCpi {
     /// CHECK: Validated by the target program via CPI.
-    pub target_account: &'info UncheckedAccount,
-    pub target_program: &'info UncheckedAccount,
+    pub target_account: UncheckedAccount,
+    pub target_program: UncheckedAccount,
 }
 ```
 
@@ -170,12 +170,12 @@ pub struct SystemAccount {
 
 ```rust
 #[derive(Accounts)]
-pub struct TransferSol<'info> {
+pub struct TransferSol {
     #[account(mut)]
-    pub from: &'info Signer,
+    pub from: Signer,
     #[account(mut)]
-    pub to: &'info SystemAccount,
-    pub system_program: &'info Program<System>,
+    pub to: SystemAccount,
+    pub system_program: Program<System>,
 }
 ```
 
@@ -203,10 +203,10 @@ pub struct Program<T: Id> {
 
 ```rust
 #[derive(Accounts)]
-pub struct CreateAccount<'info> {
+pub struct CreateAccount {
     #[account(mut)]
-    pub payer: &'info Signer,
-    pub system_program: &'info Program<System>,
+    pub payer: Signer,
+    pub system_program: Program<System>,
 }
 ```
 
@@ -244,12 +244,12 @@ pub struct Interface<T: ProgramInterface> {
 use quasar_spl::interface::TokenInterface;
 
 #[derive(Accounts)]
-pub struct Transfer<'info> {
+pub struct Transfer {
     #[account(mut)]
-    pub from: &'info InterfaceAccount<Token>,
+    pub from: InterfaceAccount<Token>,
     #[account(mut)]
-    pub to: &'info InterfaceAccount<Token>,
-    pub token_program: &'info Interface<TokenInterface>,
+    pub to: InterfaceAccount<Token>,
+    pub token_program: Interface<TokenInterface>,
 }
 ```
 
@@ -283,12 +283,12 @@ pub struct InterfaceAccount<T> {
 use quasar_spl::{token::Token, mint::Mint};
 
 #[derive(Accounts)]
-pub struct Deposit<'info> {
+pub struct Deposit {
     #[account(mut, token::mint = mint, token::authority = authority)]
-    pub vault: &'info mut InterfaceAccount<Token>,
-    pub mint: &'info InterfaceAccount<Mint>,
-    pub authority: &'info Signer,
-    pub token_program: &'info Interface<TokenInterface>,
+    pub vault: InterfaceAccount<Token>,
+    pub mint: InterfaceAccount<Mint>,
+    pub authority: Signer,
+    pub token_program: Interface<TokenInterface>,
 }
 ```
 
@@ -330,11 +330,11 @@ pub struct Sysvar<T: sysvars::Sysvar> {
 
 ```rust
 #[derive(Accounts)]
-pub struct ReadClock<'info> {
-    pub clock: &'info Sysvar<Clock>,
+pub struct ReadClock {
+    pub clock: Sysvar<Clock>,
 }
 
-impl ReadClock<'_> {
+impl ReadClock {
     pub fn handler(&self) -> Result<(), ProgramError> {
         let slot = self.clock.slot.get();
         let timestamp = self.clock.unix_timestamp.get();
@@ -352,9 +352,9 @@ let rent = Rent::get()?;
 
 ---
 
-## `Option<&'info T>`
+## `Option<T>`
 
-An optional account. When the client passes the program ID as the account address, the field resolves to `None`. Otherwise it resolves to `Some(&T)` with full validation for type `T`.
+An optional account. When the client passes the program ID as the account address, the field resolves to `None`. Otherwise it resolves to `Some(T)` with full validation for type `T`.
 
 **Validates:**
 - If address equals the program ID: field is `None` (no further checks)
@@ -364,15 +364,15 @@ An optional account. When the client passes the program ID as the account addres
 
 ```rust
 #[derive(Accounts)]
-pub struct OptionalDeposit<'info> {
+pub struct OptionalDeposit {
     #[account(mut)]
-    pub vault: &'info mut Account<Vault>,
-    pub optional_authority: Option<&'info Signer>,
+    pub vault: Account<Vault>,
+    pub optional_authority: Option<Signer>,
 }
 
-impl OptionalDeposit<'_> {
+impl OptionalDeposit {
     pub fn handler(&self) -> Result<(), ProgramError> {
-        if let Some(authority) = self.optional_authority {
+        if let Some(authority) = &self.optional_authority {
             // authority is present and validated as Signer
         }
         Ok(())

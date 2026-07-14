@@ -13,15 +13,16 @@ Use `init` with `associated_token::mint` and `associated_token::authority` to cr
 use quasar_spl::{AssociatedToken, AssociatedTokenProgram, Mint, Token};
 
 #[derive(Accounts)]
-pub struct InitAta<'info> {
-    pub payer: &'info mut Signer,
+pub struct InitAta {
+    #[account(mut)]
+    pub payer: Signer,
     #[account(init, associated_token::mint = mint, associated_token::authority = wallet)]
-    pub ata: &'info mut Account<AssociatedToken>,
-    pub wallet: &'info Signer,
-    pub mint: &'info Account<Mint>,
-    pub token_program: &'info Program<Token>,
-    pub system_program: &'info Program<System>,
-    pub ata_program: &'info Program<AssociatedTokenProgram>,
+    pub ata: Account<AssociatedToken>,
+    pub wallet: Signer,
+    pub mint: Account<Mint>,
+    pub token_program: Program<Token>,
+    pub system_program: Program<System>,
+    pub ata_program: Program<AssociatedTokenProgram>,
 }
 ```
 
@@ -29,7 +30,7 @@ Use `init_if_needed` to create only if the account doesn't exist yet. If it does
 
 ```rust
 #[account(init_if_needed, associated_token::mint = mint, associated_token::authority = wallet)]
-pub ata: &'info mut Account<AssociatedToken>,
+pub ata: Account<AssociatedToken>,
 ```
 
 ### associated_token vs token attributes
@@ -42,7 +43,7 @@ To validate an existing ATA without creating it, use `associated_token::*` witho
 
 ```rust
 #[account(associated_token::mint = mint, associated_token::authority = wallet)]
-pub ata: &'info Account<AssociatedToken>,
+pub ata: Account<AssociatedToken>,
 ```
 
 This derives the expected address, checks that the account matches, and validates the token data.
@@ -78,5 +79,5 @@ const ATA: (Address, u8) = get_associated_token_address_const(&WALLET, &MINT);
 ATAs are regular token accounts -- close them with `TokenClose`:
 
 ```rust
-self.ata.close(self.token_program, self.destination, self.authority).invoke()?;
+self.ata.close(&self.token_program, &self.destination, &self.authority).invoke()?;
 ```

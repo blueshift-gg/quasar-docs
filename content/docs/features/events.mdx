@@ -71,7 +71,7 @@ pub trait Event {
 `emit!()` calls `sol_log_data` to write event data to the transaction log (~100 CU):
 
 ```rust
-impl<'info> Make<'info> {
+impl Make {
     #[inline(always)]
     pub fn emit_event(&self, deposit: u64, receive: u64) -> Result<(), ProgramError> {
         emit!(MakeEvent {
@@ -116,10 +116,10 @@ To use `emit_cpi!()`, your instruction's `Accounts` struct must include both the
 
 ```rust
 #[derive(Accounts)]
-pub struct EmitViaCpi<'info> {
-    pub signer: &'info Signer,
-    pub event_authority: &'info EventAuthority,
-    pub program: &'info Program<QuasarTestEvents>,
+pub struct EmitViaCpi {
+    pub signer: Signer,
+    pub event_authority: EventAuthority,
+    pub program: Program<QuasarTestEvents>,
 }
 ```
 
@@ -128,7 +128,7 @@ pub struct EmitViaCpi<'info> {
 The macro must be called inside an instruction handler with access to `self.program` and `self.event_authority`:
 
 ```rust
-impl<'info> EmitViaCpi<'info> {
+impl EmitViaCpi {
     #[inline(always)]
     pub fn handler(&self, value: u64) -> Result<(), ProgramError> {
         emit_cpi!(SimpleEvent { value })?;

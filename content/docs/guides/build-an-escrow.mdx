@@ -185,20 +185,22 @@ use {
 };
 
 #[derive(Accounts)]
-pub struct Make<\'info> {
-    pub maker: &\'info mut Signer,
+pub struct Make {
+    #[account(mut)]
+    pub maker: Signer,
     #[account(init, payer = maker, seeds = [b"escrow", maker], bump)]
-    pub escrow: &\'info mut Account<Escrow>,
-    pub mint_a: &\'info Account<Mint>,
-    pub mint_b: &\'info Account<Mint>,
-    pub maker_ta_a: &\'info mut Account<Token>,
+    pub escrow: Account<Escrow>,
+    pub mint_a: Account<Mint>,
+    pub mint_b: Account<Mint>,
+    #[account(mut)]
+    pub maker_ta_a: Account<Token>,
     #[account(init_if_needed, payer = maker, token::mint = mint_b, token::authority = maker)]
-    pub maker_ta_b: &\'info mut Account<Token>,
+    pub maker_ta_b: Account<Token>,
     #[account(init_if_needed, payer = maker, token::mint = mint_a, token::authority = escrow)]
-    pub vault_ta_a: &\'info mut Account<Token>,
-    pub rent: &\'info Sysvar<Rent>,
-    pub token_program: &\'info Program<Token>,
-    pub system_program: &\'info Program<System>,
+    pub vault_ta_a: Account<Token>,
+    pub rent: Sysvar<Rent>,
+    pub token_program: Program<Token>,
+    pub system_program: Program<System>,
 }
 ```
 
@@ -255,7 +257,7 @@ pub fn emit_event(&self, deposit: u64, receive: u64) -> Result<(), ProgramError>
 ```rust
 pub fn deposit_tokens(&mut self, amount: u64) -> Result<(), ProgramError> {
     self.token_program
-        .transfer(self.maker_ta_a, self.vault_ta_a, self.maker, amount)
+        .transfer(&self.maker_ta_a, &self.vault_ta_a, &self.maker, amount)
         .invoke()
 }
 ```
@@ -274,9 +276,11 @@ use {
 };
 
 #[derive(Accounts)]
-pub struct Take<\'info> {
-    pub taker: &\'info mut Signer,
+pub struct Take {
+    #[account(mut)]
+    pub taker: Signer,
     #[account(
+        mut,
         has_one = maker,
         has_one = maker_ta_b,
         constraint = escrow.receive > 0,
@@ -284,19 +288,22 @@ pub struct Take<\'info> {
         seeds = [b"escrow", maker],
         bump = escrow.bump
     )]
-    pub escrow: &\'info mut Account<Escrow>,
-    pub maker: &\'info mut UncheckedAccount,
-    pub mint_a: &\'info Account<Mint>,
-    pub mint_b: &\'info Account<Mint>,
+    pub escrow: Account<Escrow>,
+    #[account(mut)]
+    pub maker: UncheckedAccount,
+    pub mint_a: Account<Mint>,
+    pub mint_b: Account<Mint>,
     #[account(init_if_needed, payer = taker, token::mint = mint_a, token::authority = taker)]
-    pub taker_ta_a: &\'info mut Account<Token>,
-    pub taker_ta_b: &\'info mut Account<Token>,
+    pub taker_ta_a: Account<Token>,
+    #[account(mut)]
+    pub taker_ta_b: Account<Token>,
     #[account(init_if_needed, payer = taker, token::mint = mint_b, token::authority = maker)]
-    pub maker_ta_b: &\'info mut Account<Token>,
-    pub vault_ta_a: &\'info mut Account<Token>,
-    pub rent: &\'info Sysvar<Rent>,
-    pub token_program: &\'info Program<Token>,
-    pub system_program: &\'info Program<System>,
+    pub maker_ta_b: Account<Token>,
+    #[account(mut)]
+    pub vault_ta_a: Account<Token>,
+    pub rent: Sysvar<Rent>,
+    pub token_program: Program<Token>,
+    pub system_program: Program<System>,
 }
 ```
 
@@ -315,7 +322,7 @@ pub struct Take<\'info> {
 ```rust
 pub fn transfer_tokens(&mut self) -> Result<(), ProgramError> {
     self.token_program
-        .transfer(self.taker_ta_b, self.maker_ta_b, self.taker, self.escrow.receive)
+        .transfer(&self.taker_ta_b, &self.maker_ta_b, &self.taker, self.escrow.receive)
         .invoke()
 }
 ```
@@ -329,11 +336,11 @@ pub fn withdraw_tokens_and_close(&mut self, bumps: &TakeBumps) -> Result<(), Pro
     let seeds = bumps.escrow_seeds();
 
     self.token_program
-        .transfer(self.vault_ta_a, self.taker_ta_a, self.escrow, self.vault_ta_a.amount())
+        .transfer(&self.vault_ta_a, &self.taker_ta_a, &self.escrow, self.vault_ta_a.amount())
         .invoke_signed(&seeds)?;
 
     self.vault_ta_a
-        .close(self.token_program, self.taker, self.escrow)
+        .close(&self.token_program, &self.taker, &self.escrow)
         .invoke_signed(&seeds)
 }
 ```
@@ -354,35 +361,38 @@ use {
 };
 
 #[derive(Accounts)]
-pub struct Refund<\'info> {
-    pub maker: &\'info mut Signer,
+pub struct Refund {
+    #[account(mut)]
+    pub maker: Signer,
     #[account(
+        mut,
         has_one = maker,
         close = maker,
         seeds = [b"escrow", maker],
         bump = escrow.bump
     )]
-    pub escrow: &\'info mut Account<Escrow>,
-    pub mint_a: &\'info Account<Mint>,
+    pub escrow: Account<Escrow>,
+    pub mint_a: Account<Mint>,
     #[account(init_if_needed, payer = maker, token::mint = mint_a, token::authority = maker)]
-    pub maker_ta_a: &\'info mut Account<Token>,
-    pub vault_ta_a: &\'info mut Account<Token>,
-    pub rent: &\'info Sysvar<Rent>,
-    pub token_program: &\'info Program<Token>,
-    pub system_program: &\'info Program<System>,
+    pub maker_ta_a: Account<Token>,
+    #[account(mut)]
+    pub vault_ta_a: Account<Token>,
+    pub rent: Sysvar<Rent>,
+    pub token_program: Program<Token>,
+    pub system_program: Program<System>,
 }
 
-impl<\'info> Refund<\'info> {
+impl Refund {
     #[inline(always)]
     pub fn withdraw_tokens_and_close(&mut self, bumps: &RefundBumps) -> Result<(), ProgramError> {
         let seeds = bumps.escrow_seeds();
 
         self.token_program
-            .transfer(self.vault_ta_a, self.maker_ta_a, self.escrow, self.vault_ta_a.amount())
+            .transfer(&self.vault_ta_a, &self.maker_ta_a, &self.escrow, self.vault_ta_a.amount())
             .invoke_signed(&seeds)?;
 
         self.vault_ta_a
-            .close(self.token_program, self.maker, self.escrow)
+            .close(&self.token_program, &self.maker, &self.escrow)
             .invoke_signed(&seeds)
     }
 

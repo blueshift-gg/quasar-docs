@@ -13,11 +13,13 @@ Token-2022 (Token Extensions) is a superset of SPL Token with the same base acco
 use quasar_spl::{Token2022, Mint2022, TokenCpi};
 
 #[derive(Accounts)]
-pub struct Transfer2022<'info> {
-    pub authority: &'info Signer,
-    pub from: &'info mut Account<Token2022>,
-    pub to: &'info mut Account<Token2022>,
-    pub token_program: &'info Program<Token2022>,
+pub struct Transfer2022 {
+    pub authority: Signer,
+    #[account(mut)]
+    pub from: Account<Token2022>,
+    #[account(mut)]
+    pub to: Account<Token2022>,
+    pub token_program: Program<Token2022>,
 }
 ```
 
@@ -31,17 +33,19 @@ When your program should accept tokens from **either** SPL Token or Token-2022, 
 use quasar_spl::{InterfaceAccount, Token, TokenCpi, TokenInterface};
 
 #[derive(Accounts)]
-pub struct InterfaceTransfer<'info> {
-    pub authority: &'info Signer,
-    pub from: &'info mut InterfaceAccount<Token>,
-    pub to: &'info mut InterfaceAccount<Token>,
-    pub token_program: &'info Interface<TokenInterface>,
+pub struct InterfaceTransfer {
+    pub authority: Signer,
+    #[account(mut)]
+    pub from: InterfaceAccount<Token>,
+    #[account(mut)]
+    pub to: InterfaceAccount<Token>,
+    pub token_program: Interface<TokenInterface>,
 }
 
-impl<'info> InterfaceTransfer<'info> {
+impl InterfaceTransfer {
     pub fn handler(&self, amount: u64) -> Result<(), ProgramError> {
         self.token_program
-            .transfer(self.from, self.to, self.authority, amount)
+            .transfer(&self.from, &self.to, &self.authority, amount)
             .invoke()
     }
 }
@@ -52,7 +56,7 @@ impl<'info> InterfaceTransfer<'info> {
 Works for mints too:
 
 ```rust
-pub mint: &'info InterfaceAccount<Mint>,
+pub mint: InterfaceAccount<Mint>,
 ```
 
 ## Choosing the Right Types
@@ -71,14 +75,15 @@ The `token::mint` and `token::authority` attributes work with interface types. T
 
 ```rust
 #[derive(Accounts)]
-pub struct InitVault<'info> {
-    pub payer: &'info mut Signer,
+pub struct InitVault {
+    #[account(mut)]
+    pub payer: Signer,
     #[account(init, token::mint = mint, token::authority = authority)]
-    pub vault: &'info mut InterfaceAccount<Token>,
-    pub mint: &'info InterfaceAccount<Mint>,
-    pub authority: &'info Signer,
-    pub token_program: &'info Interface<TokenInterface>,
-    pub system_program: &'info Program<System>,
+    pub vault: InterfaceAccount<Token>,
+    pub mint: InterfaceAccount<Mint>,
+    pub authority: Signer,
+    pub token_program: Interface<TokenInterface>,
+    pub system_program: Program<System>,
 }
 ```
 
@@ -88,12 +93,14 @@ Swap the types -- no business logic changes needed:
 
 ```rust
 // Before: SPL Token only
-pub from: &'info mut Account<Token>,
-pub token_program: &'info Program<Token>,
+#[account(mut)]
+pub from: Account<Token>,
+pub token_program: Program<Token>,
 
 // After: both programs
-pub from: &'info mut InterfaceAccount<Token>,
-pub token_program: &'info Interface<TokenInterface>,
+#[account(mut)]
+pub from: InterfaceAccount<Token>,
+pub token_program: Interface<TokenInterface>,
 ```
 
 CPI method signatures are identical across all three program wrappers.

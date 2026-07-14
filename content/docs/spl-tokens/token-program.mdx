@@ -13,11 +13,13 @@ Two marker types: `Token` for token accounts (165 bytes) and `Mint` for mint acc
 use quasar_spl::{Mint, Token, TokenCpi};
 
 #[derive(Accounts)]
-pub struct TransferTokens<'info> {
-    pub authority: &'info Signer,
-    pub from: &'info mut Account<Token>,
-    pub to: &'info mut Account<Token>,
-    pub token_program: &'info Program<Token>,
+pub struct TransferTokens {
+    pub authority: Signer,
+    #[account(mut)]
+    pub from: Account<Token>,
+    #[account(mut)]
+    pub to: Account<Token>,
+    pub token_program: Program<Token>,
 }
 ```
 
@@ -45,27 +47,27 @@ mint.freeze_authority()        // Option<&Address>
 ```rust
 // Transfer
 self.token_program
-    .transfer(self.from, self.to, self.authority, amount)
+    .transfer(&self.from, &self.to, &self.authority, amount)
     .invoke()?;
 
 // Transfer with decimal verification
 self.token_program
-    .transfer_checked(self.from, self.mint, self.to, self.authority, amount, decimals)
+    .transfer_checked(&self.from, &self.mint, &self.to, &self.authority, amount, decimals)
     .invoke()?;
 
 // Mint new tokens
 self.token_program
-    .mint_to(self.mint, self.destination, self.mint_authority, amount)
+    .mint_to(&self.mint, &self.destination, &self.mint_authority, amount)
     .invoke()?;
 
 // Burn
 self.token_program
-    .burn(self.source, self.mint, self.authority, amount)
+    .burn(&self.source, &self.mint, &self.authority, amount)
     .invoke()?;
 
 // Approve / revoke delegate
-self.token_program.approve(self.source, self.delegate, self.authority, amount).invoke()?;
-self.token_program.revoke(self.source, self.authority).invoke()?;
+self.token_program.approve(&self.source, &self.delegate, &self.authority, amount).invoke()?;
+self.token_program.revoke(&self.source, &self.authority).invoke()?;
 ```
 
 All CPI methods work with `.invoke()` for regular signers and `.invoke_signed(&seeds)` for PDA signers.
@@ -76,14 +78,14 @@ Use `init` with `token::mint` and `token::authority` to declaratively create and
 
 ```rust
 #[account(init, token::mint = mint, token::authority = payer)]
-pub token_account: &'info mut Account<Token>,
+pub token_account: Account<Token>,
 ```
 
 This chains `System::create_account` + `InitializeAccount3` in a single step. For conditional creation, use `init_if_needed` -- it skips creation if the account already exists and validates that mint and authority match:
 
 ```rust
 #[account(init_if_needed, payer = maker, token::mint = mint_a, token::authority = escrow)]
-pub vault: &'info mut Account<Token>,
+pub vault: Account<Token>,
 ```
 
 ## Initializing Mints
@@ -92,7 +94,7 @@ Use `mint::decimals` and `mint::authority`. Optional `mint::freeze_authority`:
 
 ```rust
 #[account(init, mint::decimals = 6, mint::authority = mint_authority)]
-pub mint: &'info mut Account<Mint>,
+pub mint: Account<Mint>,
 ```
 
 ## Closing Token Accounts
@@ -103,7 +105,7 @@ Token accounts are owned by the SPL Token program, not yours. Use the `TokenClos
 use quasar_spl::TokenClose;
 
 self.vault_ta_a
-    .close(self.token_program, self.taker, self.escrow)
+    .close(&self.token_program, &self.taker, &self.escrow)
     .invoke_signed(&seeds)?;
 ```
 
@@ -116,11 +118,11 @@ pub fn withdraw_tokens_and_close(&mut self, bumps: &RefundBumps) -> Result<(), P
     let seeds = bumps.escrow_seeds();
 
     self.token_program
-        .transfer(self.vault_ta_a, self.maker_ta_a, self.escrow, self.vault_ta_a.amount())
+        .transfer(&self.vault_ta_a, &self.maker_ta_a, &self.escrow, self.vault_ta_a.amount())
         .invoke_signed(&seeds)?;
 
     self.vault_ta_a
-        .close(self.token_program, self.maker, self.escrow)
+        .close(&self.token_program, &self.maker, &self.escrow)
         .invoke_signed(&seeds)
 }
 ```
