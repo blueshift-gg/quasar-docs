@@ -26,10 +26,10 @@ pub struct InitAta {
 }
 ```
 
-Use `init_if_needed` to create only if the account doesn't exist yet. If it does, Quasar validates that the mint and authority match:
+Use `init(idempotent)` to create the account if it doesn't exist. For an existing account, Quasar validates that the mint and authority match:
 
 ```rust
-#[account(init_if_needed, associated_token::mint = mint, associated_token::authority = wallet)]
+#[account(init(idempotent), associated_token::mint = mint, associated_token::authority = wallet)]
 pub ata: Account<Token>,
 ```
 

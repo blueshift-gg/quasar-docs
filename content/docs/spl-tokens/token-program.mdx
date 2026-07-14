@@ -81,10 +81,10 @@ Use `init` with `token::mint` and `token::authority` to declaratively create and
 pub token_account: Account<Token>,
 ```
 
-This chains `System::create_account` + `InitializeAccount3` in a single step. For conditional creation, use `init_if_needed` -- it skips creation if the account already exists and validates that mint and authority match:
+This chains `System::create_account` + `InitializeAccount3` in a single step. For conditional creation, use `init(idempotent)` -- it skips creation if the account already exists and validates that mint and authority match:
 
 ```rust
-#[account(init_if_needed, payer = maker, token::mint = mint_a, token::authority = escrow)]
+#[account(init(idempotent), payer = maker, token::mint = mint_a, token::authority = escrow)]
 pub vault: Account<Token>,
 ```
 
