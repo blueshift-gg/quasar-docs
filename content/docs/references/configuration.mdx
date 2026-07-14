@@ -168,7 +168,6 @@ template = "minimal"
 [ui]
 animation = true
 color = true
-timing = true
 ```
 
 ### `[defaults]`
@@ -193,7 +192,6 @@ Controls CLI output behavior.
 |-------|------|---------|-------------|
 | `animation` | bool | `true` | Show the animated banner on `quasar init`. Automatically set to `false` after first run. |
 | `color` | bool | `true` | Use colored terminal output. |
-| `timing` | bool | `true` | Show build timing information (e.g., "Build complete in 1.2s"). |
 
 ---
 
@@ -268,7 +266,6 @@ $ quasar config list
   [ui]
     animation  = false
     color      = true
-    timing     = true
 ```
 
 ### `quasar config reset`
@@ -293,7 +290,6 @@ $ quasar config reset
 | `defaults.template` | Global | string | `minimal`, `full` |
 | `ui.animation` | Global | bool | `true`, `false` |
 | `ui.color` | Global | bool | `true`, `false` |
-| `ui.timing` | Global | bool | `true`, `false` |
 | `project.name` | Project | string | any valid crate name |
 | `toolchain.type` | Project | string | `solana`, `upstream` |
 | `testing.language` | Project | string | `none`, `rust`, `typescript` |
