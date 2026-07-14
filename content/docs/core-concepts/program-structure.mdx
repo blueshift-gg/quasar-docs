@@ -5,7 +5,7 @@ description: "The `#[program]` macro, module layout, allocator configuration, an
 
 The `#[program]` macro generates the on-chain entrypoint, instruction dispatch, event authority PDA, and allocator configuration.
 
-## Module Layout
+## Module layout
 
 A typical Quasar program:
 
@@ -67,7 +67,7 @@ mod quasar_escrow {
 - **`declare_id!`** sets the `crate::ID` constant used for owner checks and PDA derivation.
 - **`#[program]`** annotates a module containing `#[instruction]` functions. The module name (`quasar_escrow`) determines the generated program type name (`QuasarEscrow`). A `client` submodule with typed instruction builders is also generated (compiled only for off-chain targets).
 
-## What `#[program]` Generates
+## What `#[program]` generates
 
 ### Entrypoint
 
@@ -91,7 +91,7 @@ Compile-time rules:
 
 A minimal panic handler that logs `"PANIC"` on-chain.
 
-## Allocator Configuration
+## Allocator configuration
 
 By default, `#[program]` installs a global allocator that panics on any allocation attempt. Most programs never need heap allocation because Quasar provides zero-copy alternatives for dynamic data:
 
@@ -118,7 +118,7 @@ quasar-lang = { version = "...", features = ["alloc"] }
 
 With `alloc` enabled, a bump allocator is installed instead.
 
-## Debug Mode
+## Debug mode
 
 Build with `debug` to enable detailed error logging:
 
@@ -134,7 +134,7 @@ Account 'escrow' (index 1): must be writable, no duplicates
 
 Without `--debug`, these log statements are compiled out. Always build without `--debug` for production deployments.
 
-## Instruction Handler Pattern
+## Instruction handler pattern
 
 Each handler takes `ctx: Ctx<T>` (or `ctx: CtxWithRemaining<T>`) as its first parameter, plus any typed arguments, and returns `Result<(), ProgramError>`. Business logic goes in `impl` blocks on the accounts struct:
 
@@ -155,7 +155,7 @@ pub fn create(ctx: CtxWithRemaining<Create>, threshold: u8) -> Result<(), Progra
 }
 ```
 
-## Next Steps
+## Build on the generated structure
 
 - [Accounts and Validation](./accounts-and-validation) -- how account types and `#[derive(Accounts)]` work
 - [Instructions](./instructions) -- the `#[instruction]` macro and argument handling

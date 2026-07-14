@@ -7,7 +7,7 @@ description: Auto-generated Rust instruction builders for off-chain use and test
 
 `#[program]` generates a `client` submodule with typed instruction builders. Each instruction gets a struct that converts into `solana_instruction::Instruction` via `.into()`.
 
-## Inline Client Module
+## Inline client module
 
 The module is gated behind `#[cfg(not(target_os = "solana"))]` -- it only compiles for off-chain targets (tests, CLI tools, scripts). For the vault program:
 
@@ -26,7 +26,7 @@ Each struct has a field for every account (as `Address`) plus every instruction 
 
 If your instruction uses `CtxWithRemaining<T>`, the struct includes an additional `remaining_accounts: Vec<AccountMeta>` field.
 
-## Standalone Crate
+## Standalone crate
 
 `quasar idl` also generates a standalone crate at `target/client/rust/<name>-client/` with the same instruction builders. Use it when your test suite or CLI tool lives outside the program crate:
 
@@ -37,7 +37,7 @@ my-program-client = { path = "target/client/rust/my-program-client" }
 
 The standalone crate depends only on `solana-instruction` and `solana-address` -- no dependency on your program.
 
-## Sending Transactions
+## Send transactions
 
 Combine generated instructions with `solana-client`:
 
