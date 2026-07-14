@@ -1,64 +1,54 @@
 ---
-title: Build a Multisig
-description: Step-by-step guide to building a multisig wallet program with Quasar.
+title: Study the v0.1.0 SOL multisig
+description: Trace the example's dynamic state, threshold checks, PDA-signed transfers, and known signer-uniqueness gap.
 ---
 
-Build an M-of-N multisig wallet using dynamic account fields (`String` and `Vec`), remaining accounts for variable-length signer lists, and PDA-signed transfers.
+This example stores up to ten signer entries and a threshold in one compact
+configuration account. Anyone can deposit SOL. A withdrawal succeeds only when
+enough configured signers appear as transaction signers in the instruction's
+remaining accounts.
 
-You will learn to:
+<Callout type="warn" title="Educational example: signer uniqueness is not enforced">
+`Remaining<Signer, 10>` permits repeated signer metas. The v0.1.0 `create`
+handler copies them without a uniqueness check. If the stored list contains the
+same address more than once, one transaction signer can match more than one
+stored slot and weaken the intended threshold. The existing duplicate test
+covers repeated transaction metas against a unique stored list; it does not
+cover duplicate configured signers. Do not use this example to control funds.
+</Callout>
 
-- Define accounts with dynamic fields (zero-copy `String` and `Vec`)
-- Use `CtxWithRemaining` for variable-length account lists
-- Validate signers and enforce threshold authorization
-- Mutate dynamic fields on existing accounts
+<Callout type="warn" title="A transaction multisig, not a proposal system">
+The program does not store proposals, approvals, nonces, or timelocks. Required
+signers co-sign each transfer transaction directly, and the same authorized set
+may approve another transfer later. Add durable proposal state before using
+this pattern for delayed or asynchronous governance.
+</Callout>
 
-Assumes familiarity with [Build a Vault](/docs/guides/build-a-vault) and [Build an Escrow](/docs/guides/build-an-escrow).
+## Run the release example
 
-## Project setup
-
-```toml
-[package]
-name = "quasar-multisig"
-version = "0.1.0"
-edition = "2021"
-
-[lib]
-crate-type = ["cdylib"]
-
-[features]
-alloc = []
-client = []
-debug = []
-
-[dependencies]
-quasar-lang = { version = "0.1.0" }
-solana-address = { version = "2.2.0" }
-solana-instruction = { version = "3.2.0" }
+```bash
+git clone https://github.com/blueshift-gg/quasar.git
+cd quasar
+git checkout d4af3fb0a8941ff5c6f9150771927b1d533a8479
+cargo build-sbf --tools-version v1.52 --manifest-path examples/multisig/Cargo.toml
+cargo test -p quasar-multisig --locked -- --nocapture --test-threads=1
 ```
 
-No SPL dependencies -- this multisig manages only SOL.
+The source and tests are pinned to the release candidate recorded by these
+docs:
 
-## File structure
+- [`state.rs`](https://github.com/blueshift-gg/quasar/blob/d4af3fb0a8941ff5c6f9150771927b1d533a8479/examples/multisig/src/state.rs)
+- [`create.rs`](https://github.com/blueshift-gg/quasar/blob/d4af3fb0a8941ff5c6f9150771927b1d533a8479/examples/multisig/src/instructions/create.rs)
+- [`deposit.rs`](https://github.com/blueshift-gg/quasar/blob/d4af3fb0a8941ff5c6f9150771927b1d533a8479/examples/multisig/src/instructions/deposit.rs)
+- [`execute_transfer.rs`](https://github.com/blueshift-gg/quasar/blob/d4af3fb0a8941ff5c6f9150771927b1d533a8479/examples/multisig/src/instructions/execute_transfer.rs)
+- [`set_label.rs`](https://github.com/blueshift-gg/quasar/blob/d4af3fb0a8941ff5c6f9150771927b1d533a8479/examples/multisig/src/instructions/set_label.rs)
+- [`tests.rs`](https://github.com/blueshift-gg/quasar/blob/d4af3fb0a8941ff5c6f9150771927b1d533a8479/examples/multisig/src/tests.rs)
 
-```
-src/
-  lib.rs                    # Program entrypoint
-  state.rs                  # MultisigConfig account with dynamic fields
-  instructions/
-    mod.rs                  # Re-exports
-    create.rs               # Create the multisig config
-    deposit.rs              # Deposit SOL into the vault
-    execute_transfer.rs     # Transfer SOL with threshold approval
-    set_label.rs            # Update the multisig label
-```
+## Keep the signer set bounded
 
-## Defining the multisig state
-
-`state.rs`:
+The configuration combines fixed identity fields with bounded dynamic fields:
 
 ```rust
-use quasar_lang::prelude::*;
-
 #[account(discriminator = 1, set_inner)]
 #[seeds(b"multisig", creator: Address)]
 pub struct MultisigConfig {
@@ -70,178 +60,75 @@ pub struct MultisigConfig {
 }
 ```
 
-**Fixed fields** come first:
-- **`creator`** -- The multisig creator's address.
-- **`threshold`** -- Required approvals (the "M" in M-of-N).
-- **`bump`** -- PDA bump seed used by existing-account verification.
+The PDA seeds allow one configuration per creator. `String<32>` and
+`Vec<Address, 10>` keep the account compact while giving validation a fixed
+upper bound. Quasar checks their prefixes and payload ranges before exposing
+borrowed `label()` and `signers()` views.
 
-**Dynamic fields** follow:
-- **`label: String<32>`** -- Human-readable label with a 32-byte capacity and a one-byte length prefix.
-- **`signers: Vec<Address, 10>`** -- Up to 10 authorized signer addresses with a two-byte element-count prefix.
-
-The account type has no lifetime parameter. Quasar validates the compact account buffer and generates borrowed `label()` and `signers()` accessors. See [Dynamic Fields](/docs/zero-copy/dynamic-fields).
-
-On-disk layout:
-
-```
-[disc: 1B][creator: 32B][threshold: 1B][bump: 1B]
-[label_len: 1B][signers_count: 2B]
-[label_data: 0-32B][signers_data: 0-320B]
+```text
+[discriminator: 1]
+[creator: 32][threshold: 1][bump: 1]
+[label length: 1][signer count: 2]
+[label bytes: 0..32][signer addresses: 0..320]
 ```
 
-Account size varies with content. Quasar handles allocation and reallocation automatically.
+## Create: validate the list before storing it
 
-## The program entrypoint
-
-`lib.rs`:
+`create` uses `CtxWithRemaining<Create>` because signer count is not fixed in
+the declared context:
 
 ```rust
-#![no_std]
-
-use quasar_lang::prelude::*;
-
-mod instructions;
-use instructions::*;
-mod state;
-
-declare_id!("44444444444444444444444444444444444444444444");
-
-#[program]
-mod quasar_multisig {
-    use super::*;
-
-    #[instruction(discriminator = 0)]
-    pub fn create(ctx: CtxWithRemaining<Create>, threshold: u8) -> Result<(), ProgramError> {
-        let signers = ctx.remaining_accounts().parse::<Signer, 10>()?;
-        ctx.accounts.create_multisig(threshold, &ctx.bumps, signers)
-    }
-
-    #[instruction(discriminator = 1)]
-    pub fn deposit(ctx: Ctx<Deposit>, amount: u64) -> Result<(), ProgramError> {
-        ctx.accounts.deposit(amount)
-    }
-
-    #[instruction(discriminator = 2)]
-    pub fn set_label(ctx: Ctx<SetLabel>, label: String<32>) -> Result<(), ProgramError> {
-        ctx.accounts.update_label(label)
-    }
-
-    #[instruction(discriminator = 3)]
-    pub fn execute_transfer(
-        ctx: CtxWithRemaining<ExecuteTransfer>,
-        amount: u64,
-    ) -> Result<(), ProgramError> {
-        let signers = ctx.remaining_accounts().parse::<Signer, 10>()?;
-        ctx.accounts
-            .verify_and_transfer(amount, &ctx.bumps, signers)
-    }
+#[instruction(discriminator = 0)]
+pub fn create(
+    ctx: CtxWithRemaining<Create>,
+    threshold: u8,
+) -> Result<(), ProgramError> {
+    let signers = ctx.remaining_accounts().parse::<Signer, 10>()?;
+    ctx.accounts
+        .create_multisig(threshold, &ctx.bumps, signers)
 }
 ```
 
-`create` and `execute_transfer` use `CtxWithRemaining<T>` because the number of signers varies per transaction. Each instruction parses the trailing entries into `Remaining<Signer, 10>` before calling business logic, which enforces the signer type and ten-item bound once. See [Remaining Accounts](/docs/features/remaining-accounts).
-
-`set_label` takes a `String<32>`, decoded from compact instruction data as a one-byte length prefix plus UTF-8 bytes.
-
-`instructions/mod.rs`:
-
-```rust
-pub mod create;
-pub use create::*;
-
-pub mod deposit;
-pub use deposit::*;
-
-pub mod set_label;
-pub use set_label::*;
-
-pub mod execute_transfer;
-pub use execute_transfer::*;
-```
-
-## The create instruction
-
-`instructions/create.rs`:
+Typed parsing requires each remaining entry to be a signer and enforces the
+ten-account bound. Because `Signer` explicitly permits repeated metas, it does
+not establish signer-set uniqueness. The handler copies the validated entries
+into a stack buffer and checks the numeric threshold:
 
 ```rust
-use {
-    crate::state::{MultisigConfig, MultisigConfigInner},
-    quasar_lang::prelude::*,
-};
-
-#[derive(Accounts)]
-pub struct Create {
-    #[account(mut)]
-    pub creator: Signer,
-    #[account(init, mut, payer = creator, address = MultisigConfig::seeds(creator.address()))]
-    pub config: Account<MultisigConfig>,
-    pub rent: Sysvar<Rent>,
-    pub system_program: Program<SystemProgram>,
+let threshold_count = threshold as usize;
+if threshold_count == 0 || threshold_count > count {
+    return Err(ProgramError::InvalidArgument);
 }
+
+let signers = unsafe { core::slice::from_raw_parts(addrs_ptr, count) };
+
+self.config.set_inner(
+    MultisigConfigInner {
+        creator: *self.creator.address(),
+        threshold,
+        bump: bumps.config,
+        label: "",
+        signers,
+    },
+    self.creator.to_account_view(),
+    self.rent.lamports_per_byte(),
+    self.rent.exemption_threshold_raw(),
+)
 ```
 
-`MultisigConfig::seeds(creator.address())` gives each creator one multisig and
-records the verified bump in `ctx.bumps.config`. Dynamic fields do not add a
-lifetime to either `MultisigConfig` or `Account<MultisigConfig>`.
+The full source uses `MaybeUninit<[Address; 10]>`; its memory-safety argument is
+the same bound established by `Remaining<Signer, 10>`. That argument says
+nothing about address uniqueness. `set_inner` writes the compact fields and
+resizes the account to the exact initial payload.
 
-### The handler
+There is no instruction to change the signer set or threshold after creation.
+The creator controls only the label.
 
-```rust
-impl Create {
-    #[inline(always)]
-    pub fn create_multisig(
-        &mut self,
-        threshold: u8,
-        bumps: &CreateBumps,
-        signers: Remaining<Signer, 10>,
-    ) -> Result<(), ProgramError> {
-        let mut addrs = core::mem::MaybeUninit::<[Address; 10]>::uninit();
-        let addrs_ptr = addrs.as_mut_ptr() as *mut Address;
-        let mut count = 0usize;
+## Deposit: separate funding from authorization
 
-        for signer in signers.iter() {
-            // SAFETY: typed parsing guarantees count is below the capacity 10.
-            unsafe { core::ptr::write(addrs_ptr.add(count), *signer.address()) };
-            count = count.wrapping_add(1);
-        }
-
-        let threshold_count = threshold as usize;
-        if threshold_count == 0 || threshold_count > count {
-            return Err(ProgramError::InvalidArgument);
-        }
-
-        let signer_addresses = unsafe { core::slice::from_raw_parts(addrs_ptr, count) };
-
-        self.config.set_inner(
-            MultisigConfigInner {
-                creator: *self.creator.address(),
-                threshold,
-                bump: bumps.config,
-                label: "",
-                signers: signer_addresses,
-            },
-            self.creator.to_account_view(),
-            self.rent.lamports_per_byte(),
-            self.rent.exemption_threshold_raw(),
-        )
-    }
-}
-```
-
-`parse::<Signer, 10>()` already checked the signer flag and item bound. The handler copies those validated addresses into a stack-allocated array for the compact account field.
-
-The `MaybeUninit` array avoids heap allocation -- safe because `count` tracks initialization.
-
-Threshold must be at least 1 and at most the signer count: zero would allow unapproved transfers, and exceeding the count would block all transfers.
-
-The `set_inner` opt-in generates `MultisigConfigInner`. The initializer computes the exact compact size, uses the creator as the realloc payer, and uses the supplied rent parameters to keep the account rent-exempt.
-
-## The deposit instruction
-
-`instructions/deposit.rs`:
+The SOL vault is a second PDA derived from the configuration address:
 
 ```rust
-use {crate::state::MultisigConfig, quasar_lang::prelude::*};
-
 #[derive(Seeds)]
 #[seeds(b"vault", config: Address)]
 pub struct MultisigVaultPda;
@@ -255,157 +142,94 @@ pub struct Deposit {
     pub vault: UncheckedAccount,
     pub system_program: Program<SystemProgram>,
 }
-
-impl Deposit {
-    #[inline(always)]
-    pub fn deposit(&self, amount: u64) -> Result<(), ProgramError> {
-        self.system_program
-            .transfer(&self.depositor, &self.vault, amount)
-            .invoke()
-    }
-}
 ```
 
-- **Anyone can deposit** -- the `depositor` need not be a configured signer.
-- **Vault PDA** declared by `MultisigVaultPda` and parameterized by the config address.
-- **Config is read-only** here, included for PDA seed validation.
+The depositor does not have to be a configured signer. The System Program moves
+their lamports into the system-owned vault; the config account is present only
+to bind the vault address to a validated multisig.
 
-Same pattern as the [vault guide](/docs/guides/build-a-vault) -- a system program transfer CPI.
+## Execute: count configured signers once
 
-## The execute_transfer instruction
-
-Verify enough signers have approved, then transfer SOL from the vault. `instructions/execute_transfer.rs`:
+Execution parses a fresh bounded signer list, then iterates the stored set
+first:
 
 ```rust
-use {
-    super::deposit::MultisigVaultPda,
-    crate::state::MultisigConfig,
-    quasar_lang::prelude::*,
-};
+let stored_signers = self.config.signers();
+let threshold = self.config.threshold as u32;
 
-#[derive(Accounts)]
-pub struct ExecuteTransfer {
-    #[account(
-        has_one(creator),
-        address = MultisigConfig::seeds(creator.address())
-    )]
-    pub config: Account<MultisigConfig>,
-    pub creator: UncheckedAccount,
-    #[account(mut, address = MultisigVaultPda::seeds(config.address()))]
-    pub vault: UncheckedAccount,
-    #[account(mut)]
-    pub recipient: UncheckedAccount,
-    pub system_program: Program<SystemProgram>,
-}
-```
-
-### The handler
-
-```rust
-impl ExecuteTransfer {
-    #[inline(always)]
-    pub fn verify_and_transfer(
-        &self,
-        amount: u64,
-        bumps: &ExecuteTransferBumps,
-        signers: Remaining<Signer, 10>,
-    ) -> Result<(), ProgramError> {
-        let stored_signers = self.config.signers();
-        let threshold = self.config.threshold as u32;
-
-        let mut approvals = 0u32;
-        for stored in stored_signers {
-            for signer in signers.iter() {
-                if quasar_lang::keys_eq(signer.address(), stored) {
-                    approvals = approvals.wrapping_add(1);
-                    break;
-                }
-            }
-            if approvals >= threshold {
-                break;
-            }
+let mut approvals = 0u32;
+for stored in stored_signers {
+    for signer in signers.iter() {
+        if quasar_lang::keys_eq(signer.address(), stored) {
+            approvals = approvals.wrapping_add(1);
+            break;
         }
-
-        if approvals < threshold {
-            return Err(ProgramError::MissingRequiredSignature);
-        }
-
-        let vault_signer = self.vault_signer(bumps);
-        self.system_program
-            .transfer(&self.vault, &self.recipient, amount)
-            .invoke_signed(&vault_signer)?;
-        Ok(())
+    }
+    if approvals >= threshold {
+        break;
     }
 }
+
+if approvals < threshold {
+    return Err(ProgramError::MissingRequiredSignature);
+}
 ```
 
-Load the stored signer list, count how many validated transaction signers match it, check the threshold, and execute the transfer with `invoke_signed`. Iterating the stored list first prevents a repeated signer meta from counting more than once for the same configured signer.
-
-## The set_label instruction
-
-`instructions/set_label.rs`:
+Iterating stored addresses first means repeating one transaction meta does not
+increase approvals for one stored slot. It does not protect a configuration
+that already contains the same address in multiple stored slots. After the
+threshold check, the program signs for the vault PDA and asks the System Program
+to transfer to the transaction's chosen recipient:
 
 ```rust
-use {crate::state::MultisigConfig, quasar_lang::prelude::*};
+let vault_signer = self.vault_signer(bumps);
+self.system_program
+    .transfer(&self.vault, &self.recipient, amount)
+    .invoke_signed(&vault_signer)?;
+```
 
-#[derive(Accounts)]
-pub struct SetLabel {
-    #[account(mut)]
-    pub creator: Signer,
-    #[account(
-        mut,
-        has_one(creator),
-        address = MultisigConfig::seeds(creator.address())
-    )]
-    pub config: Account<MultisigConfig>,
-    pub system_program: Program<SystemProgram>,
-}
+The recipient is not stored in a proposal because this example has no proposal
+state. It is authorized by the same transaction signatures that satisfy the
+threshold.
 
-impl SetLabel {
-    #[inline(always)]
-    pub fn update_label(&mut self, label: &str) -> Result<(), ProgramError> {
-        let mut guard = self.config.as_mut(self.creator.to_account_view());
-        if !guard.label.set(label) {
-            return Err(ProgramError::InvalidInstructionData);
-        }
-        Ok(())
-    }
+## Mutate one dynamic field
+
+`set_label` requires the original creator and binds the same configuration PDA:
+
+```rust
+let mut guard = self.config.as_mut(self.creator.to_account_view());
+if !guard.label.set(label) {
+    return Err(ProgramError::InvalidInstructionData);
 }
 ```
 
-Only the creator can update (`has_one(creator)` + `Signer`). The mutation guard saves on drop, returns excess rent to the creator when the label shrinks, and takes the required lamports from the creator when it grows.
+The mutation guard saves on drop. Growing the label takes the rent delta from
+the creator; shrinking it returns the excess. The 32-byte bound is checked
+before the new payload is committed.
 
-## Testing
+## What the test suite establishes
 
-Test dependencies:
+The pinned QuasarSVM suite covers configuration creation and layout, deposits,
+label mutation, a successful threshold transfer, insufficient approvals, and a
+repeated transaction signer meta that must not count twice against one stored
+slot. It does not test duplicate addresses in the stored configuration, and it
+does not contain the invalid-UTF-8 test claimed by the previous page.
 
-```toml
-[dev-dependencies]
-mollusk-svm = "0.10.3"
-solana-account = { version = "3.4.0" }
-solana-address = { version = "2.2.0", features = ["decode"] }
-solana-instruction = { version = "3.2.0", features = ["bincode"] }
-```
+| Invariant | Enforced by |
+|---|---|
+| Signer list is non-empty and at most ten entries | typed remaining parsing plus threshold check |
+| Threshold is numerically reachable | `1 <= threshold <= signer_entry_count` |
+| Config has one canonical address | `MultisigConfig::seeds(creator.address())` |
+| Vault belongs to that config | `MultisigVaultPda::seeds(config.address())` |
+| Each approval is a transaction signature | `Remaining<Signer, 10>` |
+| Vault transfer needs this program | generated PDA signer plus System Program CPI |
 
-Tests cover all four instructions: threshold enforcement (success and failure), label storage, and invalid UTF-8 rejection.
+The suite proves those cases for the example. It does not prove configured
+signer uniqueness and does not provide proposal replay protection, signer
+rotation, spending limits, recipient allowlists, or recovery if the creator
+disappears.
 
-Run tests:
-
-```bash
-cargo test-sbf
-```
-
-## Summary
-
-- **Dynamic fields** -- `String` and `Vec` stored directly in account data with zero-copy access.
-- **Remaining accounts** -- `CtxWithRemaining<T>` captures the tail and `Remaining<T, N>` validates a bounded typed list.
-- **Threshold authorization** -- Counts signer approvals against a stored threshold.
-- **Dynamic field mutation** -- An `as_mut` guard updates bounded fields and resizes the compact account.
-- **PDA-signed transfers** -- Vault transfers require `invoke_signed` with signer seeds.
-
-## Next steps
-
-- [Dynamic Fields](/docs/zero-copy/dynamic-fields) -- deep dive into zero-copy `String` and `Vec` layout and mutation.
-- [Remaining Accounts](/docs/features/remaining-accounts) -- patterns for working with variable-length account lists.
-- [Accounts and Validation](/docs/core-concepts/accounts-and-validation) -- all account types and constraint attributes.
-- [Program Derived Addresses](/docs/core-concepts/pda) -- PDA derivation, seeds, and bump management.
+<Cards>
+  <Card title="Dynamic fields" href="/docs/zero-copy/dynamic-fields" description="See compact layout, prefix widths, mutation guards, and rent adjustment." />
+  <Card title="Remaining accounts" href="/docs/features/remaining-accounts" description="Understand typed parsing, duplicate handling, and bounded variable account lists." />
+</Cards>
