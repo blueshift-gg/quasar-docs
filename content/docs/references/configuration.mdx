@@ -160,7 +160,9 @@ User preferences across all projects. Created when you run `quasar init` or `qua
 ```toml
 [defaults]
 toolchain = "solana"
-framework = "mollusk"
+test_language = "rust"
+rust_framework = "mollusk"
+# ts_sdk = "kit" # Used when test_language = "typescript"
 template = "minimal"
 
 [ui]
@@ -176,7 +178,9 @@ Saved preferences used by `quasar init --yes` when an explicit flag does not ove
 | Field | Type | Valid Values | Default |
 |-------|------|-------------|---------|
 | `toolchain` | string (optional) | `"solana"`, `"upstream"` | not set |
-| `framework` | string (optional) | `"none"`, `"mollusk"`, `"quasarsvm-rust"`, `"quasarsvm-web3js"`, `"quasarsvm-kit"` | not set |
+| `test_language` | string (optional) | `"none"`, `"rust"`, `"typescript"` | not set |
+| `rust_framework` | string (optional) | `"quasar-svm"`, `"mollusk"` | not set |
+| `ts_sdk` | string (optional) | `"kit"`, `"web3.js"` | not set |
 | `template` | string (optional) | `"minimal"`, `"full"` | not set |
 
 When a default is not set, `quasar init -y` uses the framework's built-in default.
@@ -226,8 +230,14 @@ Write a config value. Invalid values are rejected with valid options shown.
 $ quasar config set ui.color false
   ui.color = false
 
-$ quasar config set defaults.framework quasarsvm-rust
-  defaults.framework = quasarsvm-rust
+$ quasar config set defaults.test_language rust
+  defaults.test_language = rust
+
+$ quasar config set defaults.rust_framework quasar-svm
+  defaults.rust_framework = quasar-svm
+
+$ quasar config set defaults.ts_sdk kit
+  defaults.ts_sdk = kit
 
 $ quasar config set defaults.toolchain invalid
   invalid value for defaults.toolchain: invalid
@@ -277,7 +287,9 @@ $ quasar config reset
 | Key | Scope | Type | Valid Values |
 |-----|-------|------|-------------|
 | `defaults.toolchain` | Global | string | `solana`, `upstream` |
-| `defaults.framework` | Global | string | `none`, `mollusk`, `quasarsvm-rust`, `quasarsvm-web3js`, `quasarsvm-kit` |
+| `defaults.test_language` | Global | string | `none`, `rust`, `typescript` |
+| `defaults.rust_framework` | Global | string | `quasar-svm`, `mollusk` |
+| `defaults.ts_sdk` | Global | string | `kit`, `web3.js` |
 | `defaults.template` | Global | string | `minimal`, `full` |
 | `ui.animation` | Global | bool | `true`, `false` |
 | `ui.color` | Global | bool | `true`, `false` |
