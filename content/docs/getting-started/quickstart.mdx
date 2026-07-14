@@ -1,83 +1,91 @@
 ---
-title: Quickstart
-description: Build your first Quasar program in minutes.
+title: Build and test a program
+description: Scaffold a minimal Quasar program, compile it, and run it in QuasarSVM.
 ---
 
-![alt](/images/quickstart.webp)
+![A Quasar program and its passing local test](/images/quickstart.webp)
 
-## Scaffold a new project
+This guide takes one path through the project wizard: the Solana toolchain, a
+minimal program, and Rust tests powered by QuasarSVM. At the end, the generated
+program has compiled to SBF and executed locally without a validator.
 
-```bash
-quasar init my-program
-```
+<Callout title="Before you start">
+Install Quasar and its supported Solana toolchain first. The [installation
+guide](/docs/getting-started/installation) pins the CLI, Rust, and Agave
+versions used by v0.1.0.
+</Callout>
 
-Providing a name fills the project-name prompt, but the CLI still asks for the remaining choices. Add `--yes` to use explicit flags and saved defaults without prompting:
+## 1. Create the project
 
 ```bash
 quasar init my-program --yes --toolchain solana --test-language rust --rust-framework quasar-svm --template minimal
+cd my-program
 ```
 
-## Templates
+The command creates `src/lib.rs`, a program keypair, `Cargo.toml`,
+`Quasar.toml`, and a generated Rust test. The program, test, template, and
+toolchain choices are explicit; Git setup follows your saved CLI preference.
 
-| | Minimal | Full |
-|---|---------|------|
-| **Use when** | Quick start, prototyping | Production programs with multiple instructions |
-| **Structure** | Everything in `src/lib.rs` | `state.rs`, `errors.rs`, `instructions/` modules |
+## 2. Build the program
 
-## Key macros
+```bash
+quasar build
+```
 
-| Macro | What it does |
-|-------|-------------|
-| `declare_id!` | Sets the program's on-chain address |
-| `#[program]` | Generates the entrypoint and dispatch table |
-| `#[instruction(discriminator = N)]` | Routes an instruction by its discriminator |
-| `#[derive(Accounts)]` | Generates account parsing and validation |
-| `#[account(discriminator = N)]` | Defines an on-chain account type |
-| `#[error_code]` | Defines custom program errors (`ProgramError::Custom`) |
+A successful build writes the program binary to
+`target/deploy/my_program.so`. The program address in `src/lib.rs` comes from
+the generated keypair in the same directory.
 
-## Scaffold with `quasar add`
+## 3. Run the generated test
 
-Add instructions, state, and errors to your project. Flags can be combined:
+```bash
+quasar test
+```
+
+Quasar builds the program, loads the SBF binary into QuasarSVM, and runs the
+generated `test_initialize` test. Success is a zero exit status with Cargo's
+`test result: ok` summary.
+
+## What the test establishes
+
+The minimal handler accepts one signer account and returns successfully. Its
+generated test supplies that account, executes instruction discriminator `0`,
+and fails with the program logs if execution does not succeed.
+
+This is a local execution check, not a security claim. It does not prove that a
+larger program's account constraints, authority model, or state transitions are
+correct.
+
+## Extend the project
+
+Use `quasar add` when you are ready to move beyond the minimal handler:
 
 ```bash
 quasar add -i transfer -s vault -e access
-```
-
-Lock the new instruction's auto discriminator before you build or deploy:
-
-```bash
 quasar lint --update-lock
 ```
 
-| Flag | What it creates |
-|------|----------------|
-| `-i transfer` | `src/instructions/transfer.rs` + wires it into `lib.rs` with the next discriminator |
-| `-s vault` | `#[account]` struct in `src/state.rs` with auto-incremented discriminator |
-| `-e access` | `#[error_code]` enum in `src/errors.rs` |
+The first command adds the three modules and wires them into the program. The
+second records their generated discriminators in `quasar.lock.json`; commit
+that file so future changes cannot silently alter the wire format.
 
-Works on both templates. On minimal projects, `-i` creates the `src/instructions/` directory and wires the module automatically.
-
-## Build, test, deploy
+To run one test or enable a program feature during the test build:
 
 ```bash
-quasar build                # compile → target/deploy/my_program.so
-quasar build --debug        # with debug symbols
-
-quasar test                 # builds then runs the test suite
-quasar test -f test_init    # filter by name
+quasar test -f test_init
 quasar test --features debug
 ```
 
-The packaged release rehearsal runs the non-interactive minimal init, add, discriminator lock, release build, and three test commands shown above. Deployment is intentionally excluded because it requires a funded keypair and an external cluster.
+Deployment is deliberately outside the local first-success path because it
+needs a funded signer and a cluster. When the program is ready for devnet:
 
 ```bash
-quasar deploy --url devnet  # builds then deploys
-quasar deploy --url devnet --skip-build --keypair ./payer.json
+quasar deploy --url devnet
 ```
 
-## Next steps
-
-- **[Core Concepts](/docs/core-concepts/program-structure)** -- Zero-copy accounts, discriminators, CPI, and PDAs.
-- **[Account Constraints](/docs/references/account-constraints)** -- typed seeds, `has_one`, `constraints`, `init`, `close`, and more.
-- **[Build an Escrow](/docs/guides/build-an-escrow)** -- Full tutorial with token CPIs, PDAs, and events.
-- **[Migrating from Anchor](./migrating-from-anchor)** -- Maps every Anchor concept to its Quasar equivalent.
+<Cards>
+  <Card title="Program structure" href="/docs/core-concepts/program-structure" description="See how entrypoints, handlers, account contexts, and modules fit together." />
+  <Card title="Accounts and validation" href="/docs/core-concepts/accounts-and-validation" description="Learn what Quasar checks before your handler receives an account view." />
+  <Card title="Testing choices" href="/docs/testing/overview" description="Compare QuasarSVM, Mollusk, Rust, and TypeScript test paths." />
+  <Card title="CLI reference" href="/docs/references/cli" description="Find every init, build, test, lint, profile, and deploy option." />
+</Cards>

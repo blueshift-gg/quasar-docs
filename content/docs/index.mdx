@@ -1,35 +1,53 @@
 ---
 title: Quasar
-description: Quasar is a Solana program development framework for writing blazing fast SVM programs.
+description: A zero-copy Rust framework for Solana programs, with account validation generated at compile time.
 ---
 
-Quasar is a Solana program framework. Programs are `#![no_std]` by default -- accounts are pointer-cast directly from the SVM input buffer with no deserialization, no heap allocation, and no copies. You write `#[program]`, `#[account]`, and `#[derive(Accounts)]` like Anchor, but the generated code compiles down to near-hand-written CU efficiency.
+Quasar is a Rust framework for Solana programs built around direct account
+views. Its macros validate account metadata and layout before a handler runs;
+the handler then works on the SVM input buffer without deserializing account
+data into owned structs.
 
-## Get Started
+That model removes copies and heap work from the instruction path, but it also
+makes layout and validation part of the program's safety boundary. Quasar keeps
+those contracts explicit through `#[derive(Accounts)]`, `#[account]`, typed PDA
+seeds, and generated IDLs and clients.
+
+<Callout type="warn" title="Beta software">
+Quasar v0.1.0 is unaudited beta software. Do not use it to hold or control real
+funds. Start with local programs and review the [zero-copy safety
+model](/docs/zero-copy/safety-model) before relying on direct account views.
+</Callout>
+
+## Start here
 
 <Cards>
-  <Card title="Installation" href="/docs/getting-started/installation" image="installation.webp">
-    Install Quasar and configure your toolchain.
+  <Card title="Install Quasar" href="/docs/getting-started/installation" image="installation.webp" imageAlt="Terminal showing the Quasar installation workflow">
+    Install the CLI and choose the supported Solana or upstream SBF toolchain.
   </Card>
-  <Card title="Quickstart" href="/docs/getting-started/quickstart" image="quickstart.webp">
-    Scaffold, build, test, and deploy your first program.
-  </Card>  
-  <Card title="Migrating from Anchor" href="/docs/getting-started/migrating-from-anchor" image="migrating-from-anchor.webp">
-    Side-by-side mapping of every Anchor concept.
+  <Card title="Build and test a program" href="/docs/getting-started/quickstart" image="quickstart.webp" imageAlt="Quasar program source beside a passing local test">
+    Scaffold a minimal program, compile it, and execute its generated test locally.
+  </Card>
+  <Card title="Migrate from Anchor" href="/docs/getting-started/migrating-from-anchor" image="migrating-from-anchor.webp" imageAlt="Anchor and Quasar account validation code side by side">
+    Map familiar Anchor concepts to Quasar's account views and explicit layout rules.
   </Card>
 </Cards>
 
+## Understand the model
 
-## Features
+- **Accounts are borrowed views.** Quasar checks the input region, alignment,
+  ownership, signer state, and declared constraints before exposing typed
+  account data. See [Accounts and validation](/docs/core-concepts/accounts-and-validation).
+- **Layouts are contracts.** Account discriminators, versions, padding, and
+  dynamic fields determine what can be read safely and upgraded later. See
+  [Account layout](/docs/zero-copy/account-layout).
+- **Generated artifacts share one schema.** The IDL drives typed Rust and
+  TypeScript clients, so client encoding follows the same instruction and
+  account definitions as the program. See [IDL](/docs/core-concepts/idl).
+- **Tests run without a validator.** QuasarSVM executes program binaries in
+  process from Rust or TypeScript. See [Testing](/docs/testing/overview).
 
 <Cards>
-  <Card title="CU Profiler & Flamegraphs" href="/docs/profiling/cu-profiler" image="flamegraph.webp">
-    Per-function CU breakdown with delta tracking and interactive flamegraphs.
-  </Card>
-  <Card title="QuasarSVM" href="/docs/testing/quasarsvm-rust" image="quasarsvm.webp">
-    Local SVM test harness in Rust and TypeScript. No validator required.
-  </Card>
-  <Card title="TypeScript & Rust Clients" href="/docs/clients/typescript" image="typescript-rust-clients.webp">
-    Auto-generated typed clients for web3.js, Kit, and Rust.
-  </Card>
+  <Card title="Profile compute use" href="/docs/profiling/cu-profiler" description="Attribute compute units to functions and compare real profile snapshots." />
+  <Card title="Build an escrow" href="/docs/guides/build-an-escrow" description="Put account validation, PDAs, token CPIs, and events together in one program." />
 </Cards>

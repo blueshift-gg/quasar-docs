@@ -13,20 +13,20 @@ const rehearsedCommands = [
       'quasar init my-program --yes --toolchain solana --test-language rust --rust-framework quasar-svm --template minimal',
   },
   {
-    step: 'add',
-    command: 'quasar add -i transfer -s vault -e access',
-  },
-  {
-    step: 'lock discriminators',
-    command: 'quasar lint --update-lock',
-  },
-  {
     step: 'build',
     command: 'quasar build',
   },
   {
     step: 'test',
     command: 'quasar test',
+  },
+  {
+    step: 'add',
+    command: 'quasar add -i transfer -s vault -e access',
+  },
+  {
+    step: 'lock discriminators',
+    command: 'quasar lint --update-lock',
   },
   {
     step: 'filter tests',
