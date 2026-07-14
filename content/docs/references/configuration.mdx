@@ -19,7 +19,14 @@ name = "my-program"
 type = "solana"
 
 [testing]
+language = "rust"
+
+[testing.rust]
 framework = "mollusk"
+
+[testing.rust.test]
+program = "cargo"
+args = ["test", "tests::"]
 ```
 
 ### `[project]`
@@ -45,22 +52,44 @@ Valid values:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `framework` | string | yes | Testing framework to use. |
+| `language` | string | yes | Test harness language: `none`, `rust`, or `typescript`. |
 
-Valid values:
+Use `language = "none"` without a nested testing table when the project has no tests.
 
-| Value | Language | Description |
-|-------|----------|-------------|
-| `"none"` | -- | No test framework. `quasar test` is disabled. |
-| `"mollusk"` | Rust | Lightweight SBF emulator for unit tests. Fast iteration, no validator needed. |
-| `"quasarsvm-rust"` | Rust | Full SVM simulation with Rust test harness. Supports CPI, sysvars, and multi-program scenarios. |
-| `"quasarsvm-web3js"` | TypeScript | SVM simulation with `@solana/web3.js` client via Mocha. Integration-test style. |
-| `"quasarsvm-kit"` | TypeScript | SVM simulation with `@solana/kit` client via Mocha. Modern Solana SDK. |
+For Rust tests, add the framework and command Quasar should execute:
 
-**Framework behavior:**
+```toml
+[testing]
+language = "rust"
 
-- Rust frameworks (`mollusk`, `quasarsvm-rust`): `quasar test` runs `cargo test` and parses output
-- TypeScript frameworks (`quasarsvm-web3js`, `quasarsvm-kit`): `quasar test` runs Mocha with JSON reporter
+[testing.rust]
+framework = "quasar-svm" # or "mollusk"
+
+[testing.rust.test]
+program = "cargo"
+args = ["test", "tests::"]
+```
+
+For TypeScript tests, select the SDK and record the package-manager commands:
+
+```toml
+[testing]
+language = "typescript"
+
+[testing.typescript]
+framework = "quasar-svm"
+sdk = "kit" # or "web3.js"
+
+[testing.typescript.install]
+program = "pnpm"
+args = ["install"]
+
+[testing.typescript.test]
+program = "pnpm"
+args = ["test"]
+```
+
+`quasar test` runs the configured Rust test command when `language = "rust"`. For TypeScript, it runs the install command when `node_modules` is absent, then runs the configured test command. Test filters are inserted as Cargo filters for Rust and as `-t <PATTERN>` for other test programs.
 
 ### Example Configurations
 
@@ -74,7 +103,7 @@ name = "my-program"
 type = "solana"
 
 [testing]
-framework = "none"
+language = "none"
 ```
 
 **Full project with upstream toolchain and Rust tests:**
@@ -87,7 +116,14 @@ name = "my-defi-protocol"
 type = "upstream"
 
 [testing]
-framework = "quasarsvm-rust"
+language = "rust"
+
+[testing.rust]
+framework = "quasar-svm"
+
+[testing.rust.test]
+program = "cargo"
+args = ["test", "tests::"]
 ```
 
 ---
@@ -227,4 +263,13 @@ $ quasar config reset
 | `ui.timing` | Global | bool | `true`, `false` |
 | `project.name` | Project | string | any valid crate name |
 | `toolchain.type` | Project | string | `solana`, `upstream` |
-| `testing.framework` | Project | string | `none`, `mollusk`, `quasarsvm-rust`, `quasarsvm-web3js`, `quasarsvm-kit` |
+| `testing.language` | Project | string | `none`, `rust`, `typescript` |
+| `testing.rust.framework` | Project | string | `quasar-svm`, `mollusk` |
+| `testing.rust.test.program` | Project | string | Test executable, generated as `cargo` |
+| `testing.rust.test.args` | Project | string array | Test arguments, generated as `["test", "tests::"]` |
+| `testing.typescript.framework` | Project | string | `quasar-svm` |
+| `testing.typescript.sdk` | Project | string | `kit`, `web3.js` |
+| `testing.typescript.install.program` | Project | string | Package-manager install executable |
+| `testing.typescript.install.args` | Project | string array | Package-manager install arguments |
+| `testing.typescript.test.program` | Project | string | Package-manager test executable |
+| `testing.typescript.test.args` | Project | string array | Package-manager test arguments |
