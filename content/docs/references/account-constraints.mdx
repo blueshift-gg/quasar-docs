@@ -16,12 +16,12 @@ pub struct MyInstruction {
 
 ## Custom Errors
 
-`has_one`, `constraint`, and `address` support custom error codes with `@`:
+`has_one`, `constraints`, and `address` support custom error codes with `@`:
 
 ```rust
 #[account(
     has_one(authority) @ MyError::Unauthorized,
-    constraint = vault.balance.get() > 0 @ MyError::EmptyVault,
+    constraints(vault.balance.get() > 0) @ MyError::EmptyVault,
     address = EXPECTED_ADDRESS @ MyError::WrongAddress
 )]
 ```
@@ -116,28 +116,30 @@ need different custom errors:
 #[account(has_one(authority), has_one(mint) @ MyError::WrongMint)]
 ```
 
-### `constraint = <expr>`
+### `constraints(...)`
 
 Evaluates a boolean expression. If it returns `false`, the instruction fails.
 
 | | |
 |---|---|
-| **Syntax** | `#[account(constraint = EXPR)]` or `#[account(constraint = EXPR @ ErrorVariant)]` |
+| **Syntax** | `#[account(constraints(EXPR, ...))]` or `#[account(constraints(EXPR) @ ErrorVariant)]` |
 | **Error on failure** | `QuasarError::ConstraintViolation` (default) or custom |
 
 ```rust
 #[account(
-    constraint = vault.balance.get() >= amount @ MyError::InsufficientBalance
+    constraints(vault.balance.get() >= amount) @ MyError::InsufficientBalance
 )]
 pub vault: Account<Vault>,
 ```
 
-Multiple constraints can be specified:
+Multiple expressions can share one check group:
 
 ```rust
 #[account(
-    constraint = clock.slot.get() > vault.unlock_slot.get(),
-    constraint = vault.is_active.get()
+    constraints(
+        clock.slot.get() > vault.unlock_slot.get(),
+        vault.is_active.get()
+    )
 )]
 ```
 
@@ -534,7 +536,7 @@ pub struct CreateNft {
 | `dup` | `#[account(dup)]` | -- |
 | `address` | `#[account(address = EXPR)]` | `AddressMismatch` |
 | `has_one` | `#[account(has_one(field, ...))]` | `HasOneMismatch` |
-| `constraint` | `#[account(constraint = EXPR)]` | `ConstraintViolation` |
+| `constraints` | `#[account(constraints(EXPR, ...))]` | `ConstraintViolation` |
 | `init` | `#[account(init, payer = p)]` | `AccountAlreadyInitialized` |
 | `init_if_needed` | `#[account(init_if_needed, payer = p)]` | -- |
 | `payer` | `#[account(payer = field)]` | -- |

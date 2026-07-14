@@ -283,7 +283,7 @@ pub struct Take {
     #[account(
         mut,
         has_one(maker, maker_ta_b),
-        constraint = escrow.receive > 0,
+        constraints(escrow.receive > 0),
         close = taker,
         address = Escrow::seeds(maker.address())
     )]
@@ -310,7 +310,7 @@ pub struct Take {
 
 - **`has_one(maker)`** -- Checks `escrow.maker == maker.address()`.
 - **`has_one(maker_ta_b)`** -- Ensures tokens go to the right destination.
-- **`constraint = escrow.receive > 0`** -- Escrow must have a nonzero receive amount.
+- **`constraints(escrow.receive > 0)`** -- Escrow must have a nonzero receive amount.
 - **`close = taker`** -- Closes the escrow and sends rent to the taker.
 - **`address = Escrow::seeds(maker.address())`** -- Verifies the same typed PDA layout declared on `Escrow` and records the bump.
 
@@ -438,7 +438,7 @@ cargo test-sbf
 - **SPL token CPI** -- Type-safe transfers and closures via `quasar-spl`.
 - **PDA signing** -- `invoke_signed` with context bumps authorizes CPIs on behalf of a PDA.
 - **Account closure** -- `close` reclaims rent automatically.
-- **Constraints** -- `has_one` links accounts; `constraint` allows arbitrary checks.
+- **Constraints** -- `has_one` links accounts; `constraints(...)` evaluates arbitrary checks.
 - **Events** -- `emit!` writes structured data to the transaction log.
 
 ## Next steps

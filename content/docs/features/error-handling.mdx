@@ -32,7 +32,7 @@ pub enum QuasarError {
     InvalidPda,
     /// Seeds provided for PDA verification are invalid.
     InvalidSeeds,
-    /// A `#[account(constraint = ...)]` expression evaluated to false.
+    /// A `#[account(constraints(...))]` expression evaluated to false.
     ConstraintViolation,
     /// `#[account(has_one(...))]` field does not match.
     HasOneMismatch,
