@@ -3,7 +3,12 @@ title: Metaplex Metadata
 description: Interacting with the Metaplex Token Metadata program from Quasar.
 ---
 
-The Metaplex Token Metadata program attaches metadata (name, symbol, URI, creators, collections) to SPL Token mints. The `quasar-spl` crate provides zero-copy account types, typed CPI methods, and declarative initialization attributes for metadata and master edition accounts. Enable it with the `metadata` feature on `quasar-spl`.
+The Metaplex Token Metadata program attaches metadata (name, symbol, URI, creators, collections) to SPL Token mints. The `quasar-metadata` package provides zero-copy account types, typed CPI methods, and account behaviors for metadata and master edition accounts.
+
+```toml
+[dependencies]
+quasar-metadata = "0.1.0"
+```
 
 ## Account types
 
@@ -37,58 +42,71 @@ edition.max_supply()  // Option<u64> -- None means unlimited
 
 ## The MetadataProgram type
 
-`Program<MetadataProgram>` validates the program address and provides CPI methods through the `MetadataCpi` trait:
+`Program<MetadataProgram>` validates the program address and provides CPI methods through the `MetadataCpi` trait. Both come from `quasar-metadata`:
 
 ```rust
-use quasar_spl::metadata::MetadataProgram;
+use quasar_metadata::{MetadataCpi, MetadataProgram};
 
 pub metadata_program: Program<MetadataProgram>,
 ```
 
 ## Declarative metadata initialization
 
-Use `metadata::*` attributes on a mint's `#[account(init)]` to create metadata declaratively:
+Use the `metadata(...)` behavior on `Account<MetadataAccount>` to create and validate a mint's metadata PDA:
 
 ```rust
-use quasar_spl::{accounts::mint, metadata::MetadataProgram, Mint, Token, TokenProgram};
+use quasar_metadata::{accounts::metadata, MetadataAccount, MetadataProgram};
 
 #[derive(Accounts)]
-pub struct CreateNft {
+pub struct CreateMetadata {
     #[account(mut)]
     pub payer: Signer,
+    pub mint: UncheckedAccount,
     pub mint_authority: Signer,
+    pub update_authority: Signer,
+    pub metadata_program: Program<MetadataProgram>,
+    pub system_program: Program<SystemProgram>,
+    pub rent: Sysvar<Rent>,
     #[account(
         init,
-        mint(decimals = 0, authority = mint_authority, token_program = token_program),
-        metadata::name = b"My NFT",
-        metadata::symbol = b"MNFT",
-        metadata::uri = b"https://example.com/nft.json",
-        metadata::seller_fee_basis_points = 500,
-        metadata::is_mutable = true,
+        payer = payer,
+        metadata(
+            program = metadata_program,
+            mint = mint,
+            mint_authority = mint_authority,
+            update_authority = update_authority,
+            system_program = system_program,
+            rent = rent,
+            name = "My NFT",
+            symbol = "MNFT",
+            uri = "https://example.com/nft.json",
+            seller_fee_basis_points = 500,
+            is_mutable = true
+        )
     )]
-    pub mint: Account<Mint>,
-    #[account(mut)]
-    pub metadata: UncheckedAccount,
-    pub metadata_program: Program<MetadataProgram>,
-    pub token_program: Program<TokenProgram>,
-    pub system_program: Program<SystemProgram>,
-    pub rent: UncheckedAccount,
+    pub metadata: Account<MetadataAccount>,
 }
 ```
 
-During account parsing, this creates the mint via `System::create_account` + `InitializeMint2`, then calls `create_metadata_accounts_v3` via CPI.
+During account parsing, Quasar calls `create_metadata_accounts_v3` through the supplied Metadata program. For an existing metadata account, `metadata(program = metadata_program, mint = mint)` validates the program, mint, and PDA address without invoking the create CPI.
 
-The Metaplex program derives the metadata PDA internally (seeds: `["metadata", metadata_program_id, mint_address]`), so the `metadata` account is an `UncheckedAccount`.
+The Metaplex program derives and allocates the metadata PDA from `["metadata", metadata_program_id, mint_address]`. Quasar loads the result as `Account<MetadataAccount>`.
 
-### Attribute reference
+### Behavior arguments
 
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `metadata::name` | `&[u8]` or `b"..."` | Token name (max 32 bytes) |
-| `metadata::symbol` | `&[u8]` or `b"..."` | Token symbol (max 10 bytes) |
-| `metadata::uri` | `&[u8]` or `b"..."` | URI to off-chain metadata JSON (max 200 bytes) |
-| `metadata::seller_fee_basis_points` | `u16` | Royalty in basis points (100 = 1%) |
-| `metadata::is_mutable` | `bool` | Whether metadata can be updated later |
+| Argument | Type | Description |
+|----------|------|-------------|
+| `program` | account field | Token Metadata program; required for validation and initialization |
+| `mint` | account field | Mint described by the metadata; required for validation and initialization |
+| `mint_authority` | account field | Current mint authority; required for initialization |
+| `update_authority` | account field | Metadata update authority; required for initialization and optional during validation |
+| `system_program` | account field | System program passed to the create CPI |
+| `rent` | account field | Rent sysvar passed to the create CPI |
+| `name` | `&str` | Token name, up to 32 bytes |
+| `symbol` | `&str` | Token symbol, up to 10 bytes |
+| `uri` | `&str` | Off-chain metadata URI, up to 200 bytes |
+| `seller_fee_basis_points` | `u16` | Royalty in basis points; defaults to `0` |
+| `is_mutable` | `bool` | Whether metadata can be updated; defaults to `true` |
 
 The Metaplex program enforces these maximum lengths. Quasar validates them at CPI build time and panics if exceeded.
 
@@ -296,7 +314,7 @@ For manual initialization outside the declarative attribute system, use these tr
 ### InitMetadata
 
 ```rust
-use quasar_spl::metadata::InitMetadata;
+use quasar_metadata::InitMetadata;
 
 self.metadata.init(
     &self.metadata_program,
@@ -334,7 +352,7 @@ self.metadata.init_signed(
 ### InitMasterEdition
 
 ```rust
-use quasar_spl::metadata::InitMasterEdition;
+use quasar_metadata::InitMasterEdition;
 
 self.master_edition.init(
     &self.metadata_program,
