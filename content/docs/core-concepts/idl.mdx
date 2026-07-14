@@ -37,18 +37,61 @@ Each instruction includes its name, discriminator bytes, accounts with flags, an
   "name": "Make",
   "discriminator": [0],
   "accounts": [
-    { "name": "maker", "writable": true, "signer": true },
-    { "name": "escrow", "writable": true, "pda": {
-      "seeds": [
-        { "kind": "const", "value": [101, 115, 99, 114, 111, 119] },
-        { "kind": "account", "path": "maker" }
-      ]
-    }},
-    { "name": "mintA" },
-    { "name": "makerTaA", "writable": true },
-    { "name": "vaultTaA", "writable": true },
-    { "name": "tokenProgram", "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
-    { "name": "systemProgram", "address": "11111111111111111111111111111111" }
+    {
+      "name": "maker",
+      "writable": true,
+      "signer": true,
+      "resolver": { "kind": "input" }
+    },
+    {
+      "name": "escrow",
+      "writable": true,
+      "signer": false,
+      "resolver": {
+        "kind": "pda",
+        "program": { "kind": "programId" },
+        "seeds": [
+          { "kind": "const", "value": [101, 115, 99, 114, 111, 119] },
+          { "kind": "account", "path": "maker" }
+        ]
+      }
+    },
+    {
+      "name": "mintA",
+      "writable": false,
+      "signer": false,
+      "resolver": { "kind": "input" }
+    },
+    {
+      "name": "makerTaA",
+      "writable": true,
+      "signer": false,
+      "resolver": { "kind": "input" }
+    },
+    {
+      "name": "vaultTaA",
+      "writable": true,
+      "signer": true,
+      "resolver": { "kind": "input" }
+    },
+    {
+      "name": "tokenProgram",
+      "writable": false,
+      "signer": false,
+      "resolver": {
+        "kind": "const",
+        "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+      }
+    },
+    {
+      "name": "systemProgram",
+      "writable": false,
+      "signer": false,
+      "resolver": {
+        "kind": "const",
+        "address": "11111111111111111111111111111111"
+      }
+    }
   ],
   "args": [
     { "name": "deposit", "type": "u64" },
@@ -57,9 +100,10 @@ Each instruction includes its name, discriminator bytes, accounts with flags, an
 }
 ```
 
-- PDA seeds are encoded as `const` (literal bytes) or `account` (reference to another account)
-- `writable` and `signer` flags appear only when `true`
-- Known program addresses are included as `address` fields
+- Every account node records explicit `writable` and `signer` flags plus a `resolver`.
+- Caller-provided accounts use `resolver: { "kind": "input" }`.
+- PDA resolvers name the derivation program and encode seeds as `const` bytes or an `account` path.
+- Known program addresses use a `const` resolver with an `address`.
 
 Instructions using `CtxWithRemaining` include a structured `remainingAccounts` contract:
 
