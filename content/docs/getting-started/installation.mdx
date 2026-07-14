@@ -43,8 +43,8 @@ Quasar compiles programs to SBF (Solana Bytecode Format). Two toolchains are ava
 
 | Toolchain | Build command | Notes |
 |-----------|---------------|-------|
-| **Solana** (default) | `cargo build-sbf` | Requires Agave CLI v4.1.1 with support for platform-tools v1.52 or newer. |
-| **Upstream** | `cargo +nightly build` | Targets `bpfel-unknown-none` with [`sbpf-linker`](https://github.com/blueshift-gg/sbpf-linker). Smaller binaries, nightly features. |
+| **Solana** (default) | `quasar build` | Invokes `cargo build-sbf` with platform-tools v1.52. Requires Agave CLI v4.1.1. |
+| **Upstream** | `quasar build` | Invokes the generated `build-bpf` alias with `nightly-2026-03-27` and [`sbpf-linker`](https://github.com/blueshift-gg/sbpf-linker) 0.1.9. |
 
 Choose during `quasar init` or set in `Quasar.toml`:
 
