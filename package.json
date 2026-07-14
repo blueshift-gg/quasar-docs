@@ -37,9 +37,9 @@
   "dependencies": {
     "@opennextjs/cloudflare": "^1.20.1",
     "@types/mdx": "^2.0.13",
-    "fumadocs-core": "^16.6.17",
+    "fumadocs-core": "^16.11.4",
     "fumadocs-mdx": "^14.2.12",
-    "fumadocs-ui": "^16.6.17",
+    "fumadocs-ui": "^16.11.4",
     "next": "~16.2.10",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
