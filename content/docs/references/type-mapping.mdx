@@ -199,7 +199,7 @@ pub fn initialize(ctx: Ctx<Initialize>) -> Result<(), ProgramError> { ... }
 pub fn deposit(ctx: Ctx<Deposit>) -> Result<(), ProgramError> { ... }
 ```
 
-Instruction discriminators can be zero. The `quasar new instruction` command auto-increments from the highest existing discriminator.
+Instruction discriminators can be zero. `quasar add --instruction` inserts an unpinned `#[instruction]`; the `#[program]` macro assigns the next free one-byte discriminator in source order and skips explicit values.
 
 ---
 
