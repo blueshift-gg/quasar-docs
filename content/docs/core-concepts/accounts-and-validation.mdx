@@ -1,417 +1,196 @@
 ---
-title: Accounts and Validation
-description: "Account types, zero-copy mechanics, the `#[account]` macro, and `#[derive(Accounts)]`."
+title: Accounts and validation
+description: How Quasar turns the SVM account list into validated, zero-copy views before a handler runs.
 ---
 
-`#[derive(Accounts)]` generates all parsing and validation at compile time. Every account is zero-copy -- fields are read directly from account memory with no deserialization or heap allocation.
+An instruction enters a Solana program with an ordered list of accounts and an
+instruction-data buffer. Quasar's `#[derive(Accounts)]` turns that untyped input
+into a context whose fields have already passed the checks declared by the
+program.
 
-## No Duplicates by Default
+The central rule is simple: **the handler should receive capabilities, not raw
+accounts**. A `Signer` has signed, an `Account<Vault>` has the expected owner
+and layout, and a `Program<SystemProgram>` is the executable program at the
+expected address.
 
-Quasar contexts reject duplicate accounts by default. This enables a faster entrypoint -- the runtime can skip borrow-state tracking for most accounts, which saves CUs on every instruction. Most instructions don't need the same account twice.
+<Callout type="warn" title="Validation is part of the trust boundary">
+Quasar generates the checks you declare; it cannot infer your authority model.
+Choosing `UncheckedAccount`, omitting `has_one`, or accepting the wrong owner is
+still a program bug even when parsing succeeds.
+</Callout>
 
-When you do need a duplicate (rare), opt in with `#[account(dup)]` and a `/// CHECK:` comment explaining why:
+## The context is executable policy
 
-```rust
-/// CHECK: Same authority used as both source and destination signer.
-#[account(dup)]
-pub authority_alias: Signer,
-```
-
-## Account Types
-
-| Type | What it does |
-|------|-------------|
-| `Account<T>` | Program-owned data account. Validates owner + discriminator. `Deref`/`DerefMut` to the zero-copy type. |
-| `Signer` | Must have the `is_signer` flag set. |
-| `UncheckedAccount` | No validation. For accounts passed through to CPIs or validated manually. |
-| `SystemAccount` | Owned by the System program. For SOL-holding accounts with no program data. |
-| `Program<T>` | Validates the executable flag and address against `T::ID`. |
-| `Interface<T>` | Validates address against a user-defined set of program IDs. See [Interfaces](#interfaces). |
-| `InterfaceAccount<T>` | Like `Account<T>`, but accepts accounts owned by multiple programs. Supports `resolve()`. |
-| `Sysvar<T>` | Validates the sysvar address. `Deref` to the inner type. |
-
-Any type can be wrapped in `Option` -- an all-zero address is treated as `None`:
-
-```rust
-pub optional_authority: Option<Signer>,
-```
-
-## Mutability
-
-Account wrapper fields are owned values. Mark a field writable with the
-`#[account(mut)]` attribute:
-
-```rust
-#[account(mut)]
-pub vault: Account<Vault>,
-```
-
-Fields without `#[account(mut)]` are read-only unless an operation such as
-`init` already requires writability. If a mutable account is not writable in
-the transaction, parsing fails with `ProgramError::Immutable`.
-
-## Interfaces
-
-`Interface<T>` and `InterfaceAccount<T>` are a generic abstraction for accounts that can belong to multiple programs. Unlike Anchor where interface types are hardcoded to SPL Token/Token-2022, Quasar lets you define interfaces for any set of programs.
-
-### Defining an interface
-
-Implement `ProgramInterface` to tell Quasar which program IDs are valid:
-
-```rust
-pub struct TokenInterface;
-
-impl ProgramInterface for TokenInterface {
-    fn matches(address: &Address) -> bool {
-        *address == SPL_TOKEN_ID || *address == TOKEN_2022_ID
-    }
-}
-```
-
-`TokenInterface` is built-in, but you can create interfaces for anything -- oracles, governance programs, lending protocols.
-
-### Using interfaces
-
-`Interface<T>` wraps a program account (validates address against `T::matches()`). `InterfaceAccount<T>` wraps a data account owned by any matching program:
+An accounts struct puts the rules for one instruction in one place:
 
 ```rust
 #[derive(Accounts)]
-pub struct Transfer {
+pub struct Withdraw {
+    #[account(mut, has_one(authority), has_one(mint))]
+    pub vault: Account<Vault>,
     pub authority: Signer,
-    #[account(mut)]
-    pub from: InterfaceAccount<Token>,
-    #[account(mut)]
-    pub to: InterfaceAccount<Token>,
+    pub mint: InterfaceAccount<Mint>,
     pub token_program: Interface<TokenInterface>,
 }
 ```
 
-CPI methods work identically -- the SVM routes to whichever program was passed in the transaction.
+Before `Withdraw` is constructed, Quasar establishes that:
 
-### Runtime dispatch with `resolve()`
+- `vault` is writable, owned by this program, and has `Vault`'s discriminator
+  and data layout;
+- the stored `vault.authority` and `vault.mint` addresses match the accounts in
+  this instruction;
+- `authority` signed the transaction;
+- `mint` is a valid token mint owned by a supported token program; and
+- `token_program` is an executable program accepted by `TokenInterface`.
 
-`InterfaceAccount<T>` supports `resolve()` for dispatching to different zero-copy layouts based on the runtime owner. Implement `InterfaceResolve` on your marker type:
+The handler can then focus on the state transition. For the complete list of
+wrappers and their exact checks, use the [account types
+reference](/docs/references/account-types). For every field attribute and error,
+use the [account constraints reference](/docs/references/account-constraints).
 
-```rust
-match ctx.accounts.oracle.resolve()? {
-    OraclePrice::Pyth(price) => { /* read Pyth-specific fields */ }
-    OraclePrice::Switchboard(price) => { /* read Switchboard fields */ }
-}
-```
+## Validation order
 
-The owner check runs once during account parsing. `resolve()` is a second pointer cast -- no re-validation, no allocation. This gives you tagged-union-style dispatch over accounts owned by entirely different programs, all zero-copy.
+For each instruction, generated code performs these stages:
 
-## Defining Account Types
+1. **Header checks.** Signer, writable, executable, and duplicate expectations
+   are compared with the runtime account metadata.
+2. **Typed construction.** Each wrapper validates the owner, address,
+   discriminator, size, and layout required by its type.
+3. **PDA and initialization work.** Typed address expressions are verified;
+   accounts declared with `init` are created when appropriate.
+4. **Field constraints.** `has_one`, `constraints(...)`, and explicit `address`
+   checks run in declaration order.
+5. **Handler execution.** Only a fully constructed context reaches your
+   instruction body.
+6. **Epilogue work.** Declared `close` operations run after a successful
+   handler.
 
-The `#[account]` macro transforms a struct into a zero-copy on-chain type. You write normal Rust types; the macro generates a companion struct with alignment-1 Pod fields, and `Deref`/`DerefMut` impls that make the conversion invisible.
+This order matters. For example, a business constraint can read `vault.balance`
+because the owner and `Vault` layout were checked when `Account<Vault>` was
+constructed.
 
-### How zero-copy works
+## Account data stays borrowed
 
-Solana account data arrives as raw `&[u8]`. Quasar pointer-casts directly into it -- no deserialization, no copying. The catch: `u64` has alignment 8, but account data has no alignment guarantees. A misaligned cast is undefined behavior.
-
-The `#[account]` macro solves this by generating a companion `#[repr(C)]` struct where every field is replaced with its alignment-1 Pod equivalent:
-
-| You write | Generated companion uses | Size |
-|-----------|------------------------|------|
-| `u64` | `PodU64` | 8 bytes |
-| `u32` | `PodU32` | 4 bytes |
-| `u16` | `PodU16` | 2 bytes |
-| `i64` | `PodI64` | 8 bytes |
-| `bool` | `PodBool` | 1 byte |
-| `u8` / `i8` | `u8` / `i8` (already alignment 1) | 1 byte |
-| `Address` | `Address` (already `[u8; 32]`) | 32 bytes |
-
-Pod types implement all arithmetic operators (`+`, `-`, `*`, `/`, `%`, `+=`, etc.) with both Pod and native operands, plus `From`/`Into` conversions. So when you read `escrow.receive` (a `PodU64`) and compare it to a `u64` argument, it just works:
-
-```rust
-// escrow.receive is PodU64 under the hood, but this compiles naturally:
-require!(escrow.receive > 0, MyError::ZeroReceiveAmount);
-let total = escrow.receive + deposit;
-```
-
-Arithmetic uses wrapping semantics in release builds (saves CUs) and panics on overflow in debug builds -- matching Rust's native integer behavior. Use `checked_add`, `checked_sub`, etc. when overflow must be detected.
-
-### Static accounts
-
-For fixed-size fields:
+`Account<T>` does not deserialize account bytes into a separate Rust value. The
+`#[account]` macro generates an alignment-one companion layout and exposes a
+typed view over the validated account region.
 
 ```rust
 #[account(discriminator = 1, set_inner)]
-#[seeds(b"escrow", maker: Address)]
-pub struct Escrow {
-    pub maker: Address,
-    pub mint_a: Address,
-    pub mint_b: Address,
-    pub maker_ta_b: Address,
-    pub receive: u64,
+#[seeds(b"vault", authority: Address)]
+pub struct Vault {
+    pub authority: Address,
+    pub balance: u64,
     pub bump: u8,
+    pub _reserved: [u8; 32],
 }
 ```
 
-The macro generates:
-- A companion `EscrowZc` struct with Pod fields and `#[repr(C)]` layout (alignment 1)
-- `Deref`/`DerefMut` impls that pointer-cast directly into account data
-- `Discriminator`, `Owner`, `Space` trait impls
-- An `EscrowInner` value and `set_inner()` method because the account opted into `set_inner`
+Integer fields use Quasar's alignment-one Pod representations internally.
+Normal arithmetic and comparisons still work, but release builds use wrapping
+integer semantics. Use checked arithmetic when overflow must reject the
+instruction.
 
-The generated inner value keeps the native field types you declared and `set_inner()` converts them to Pod internally:
+Dynamic `String<MAX>` and `Vec<T, MAX>` fields are also borrowed after their
+header and payload ranges are validated. Mutation goes through a guard so the
+account can be resized and rent-adjusted when the guard saves.
 
-```rust
-self.escrow.set_inner(EscrowInner {
-    maker: *self.maker.address(),       // Address
-    mint_a: *self.mint_a.address(),     // Address
-    mint_b: *self.mint_b.address(),     // Address
-    maker_ta_b: *self.maker_ta_b.address(), // Address
-    receive,                            // u64 -> PodU64 internally
-    bump: bumps.escrow,                 // u8
-});
-```
+The [account layout guide](/docs/zero-copy/account-layout) covers discriminators,
+versions, reserved bytes, and upgrade-safe layouts. [Dynamic
+fields](/docs/zero-copy/dynamic-fields) covers bounded strings, vectors, and
+mutation guards.
 
-### Dynamic accounts
+## Mutability and duplicate addresses are explicit
 
-Variable-length fields use `String<MAX>` and `Vec<T, MAX>`. Quasar stores their length prefixes in the compact account header and their current payloads in the tail:
+Fields are read-only unless the context declares `#[account(mut)]` or an
+operation such as `init` requires writability. If the transaction supplies a
+read-only account for a mutable field, parsing fails before the handler runs.
 
-```rust
-#[account(discriminator = 1, set_inner)]
-pub struct MultisigConfig {
-    pub creator: Address,
-    pub threshold: u8,
-    pub bump: u8,
-    pub label: String<32>,         // max 32 bytes
-    pub signers: Vec<Address, 10>, // max 10 elements
-}
-```
+Quasar also rejects duplicate addresses by default. This prevents a caller
+from satisfying two logical roles with the same account and lets the generated
+entrypoint avoid general borrow-state tracking.
 
-Read accessors borrow the validated account buffer:
+When one address intentionally fills two roles, opt in on the later field and
+record the invariant:
 
 ```rust
-let label: &str = self.config.label();
-let signers: &[Address] = self.config.signers();
+/// CHECK: The same authority intentionally signs both sides of this operation.
+#[account(dup)]
+pub authority_alias: Signer,
 ```
 
-To change a dynamic field, create a mutation guard with the account that pays or receives lamports during resize:
+Treat `dup` like `UncheckedAccount`: it is a review point, not a convenience
+flag.
 
-```rust
-let mut guard = self.config.as_mut(self.creator.to_account_view());
-if !guard.label.set(label) {
-    return Err(ProgramError::InvalidInstructionData);
-}
-```
+## Put address derivation next to the account type
 
-The guard saves on drop and resizes the account to the exact compact length. Borrowed `&str` and `&[T]` values are instruction argument types, not account field types.
-
-### Discriminator rules
-
-- Must be non-zero (prevents uninitialized accounts from passing validation)
-- Cannot start with `0xFF` (reserved for the event protocol)
-
-## Account Constraints
-
-Field-level `#[account(...)]` attributes on a `#[derive(Accounts)]` struct generate validation code that runs during account parsing. Constraints can be combined freely on a single field.
-
-### `init` / `init(idempotent)`
-
-`init` creates the account via a CPI to the System program -- it allocates space, pays rent, writes the discriminator, and assigns ownership to your program in one step. `init(idempotent)` skips creation when the account is already initialized, then validates the existing account.
-
-Both need a payer. If your struct has a field named `payer`, it's auto-detected. Otherwise specify it explicitly with `payer = <field>`. Idempotent initialization also requires either an `address` constraint or an account behavior group, such as the token constraints below, that can validate an existing account. Space is auto-computed from the account type; override with `space = <expr>` for dynamic accounts or custom sizing:
-
-```rust
-// payer auto-detected from the `payer` field
-#[account(init, address = Escrow::seeds(payer.address()))]
-pub escrow: Account<Escrow>,
-#[account(mut)]
-pub payer: Signer,
-
-// explicit payer when the field has a different name
-#[account(init, payer = maker, address = Escrow::seeds(maker.address()))]
-pub escrow: Account<Escrow>,
-#[account(mut)]
-pub maker: Signer,
-
-// Idempotent initialization for token accounts
-#[account(
-    init(idempotent),
-    payer = taker,
-    token(mint = mint_a, authority = taker, token_program = token_program)
-)]
-pub taker_ta_a: Account<Token>,
-```
-
-### Typed seeds and `address`
-
-Declare the PDA layout once on the account type, then bind fields to it with an
-address constraint:
+Typed seeds define a PDA once:
 
 ```rust
 #[account(discriminator = 1)]
-#[seeds(b"escrow", maker: Address)]
-pub struct Escrow {
-    pub maker: Address,
+#[seeds(b"vault", authority: Address)]
+pub struct Vault {
+    pub authority: Address,
     pub bump: u8,
 }
-
-// Initialization discovers the canonical bump.
-#[account(init, payer = maker, address = Escrow::seeds(maker.address()))]
-pub escrow: Account<Escrow>,
-
-// Existing accounts use the same typed address expression.
-#[account(mut, address = Escrow::seeds(maker.address()))]
-pub escrow: Account<Escrow>,
 ```
 
-The verified bump is stored in `ctx.bumps.<field_name>`. When the account type
-contains a `bump: u8` field, saving that value during initialization lets Quasar
-use the stored-bump verification path for later instructions.
-
-### `has_one`
-
-Checks that a field stored in the account's data matches the address of another account in the struct. The field names must match -- if your account has a `maker: Address` field, then `has_one(maker)` checks `escrow.maker == maker.address()`:
+Instruction contexts bind fields to that definition:
 
 ```rust
-#[account(mut, has_one(maker, mint))]
-pub escrow: Account<Escrow>,
-pub maker: Signer,
-pub mint: Account<Mint>,
+#[account(
+    init,
+    payer = authority,
+    address = Vault::seeds(authority.address())
+)]
+pub vault: Account<Vault>,
 ```
 
-### `constraints(...)`
+Initialization discovers the canonical bump and exposes it through
+`ctx.bumps.vault`. Store that bump in the account when later instructions need
+the faster stored-bump verification path. The generated `vault_signer` helper
+reuses the same seed definition for signed CPIs.
 
-Arbitrary boolean expression evaluated after the account is constructed. If it returns `false`, the instruction fails. Useful for business logic checks that don't fit the other constraint types:
+See [Program-derived addresses](/docs/core-concepts/pda) for typed seed rules,
+verification paths, and signer helpers.
 
-```rust
-#[account(constraints(escrow.receive > 0))]    // reject zero-value escrows
-#[account(constraints(clock.slot.get() > vault.unlock_slot.get()))]  // timelock
-```
+## Choose constraints by responsibility
 
-### `address`
+- Use the **wrapper type** for structural identity: owner, executable program,
+  sysvar address, discriminator, and layout.
+- Use **`address`** for a canonical key or a typed PDA.
+- Use **`has_one`** when stored state names another account in the context.
+- Use **`constraints(...)`** for business invariants that depend on validated
+  values.
+- Use **`init`, `realloc`, and `close`** for account lifecycle operations whose
+  payer and destination are explicit in the context.
 
-Validates that the account's address matches a constant or expression exactly. Good for admin keys, well-known program addresses, or canonical accounts:
-
-```rust
-const ADMIN: Address = address!("Admin111111111111111111111111111111111111111");
-
-#[account(address = ADMIN)]
-pub admin: Signer,
-```
-
-### Custom errors with `@`
-
-`has_one`, `constraints`, and `address` all accept `@ ErrorVariant` to replace the default error with your own. This makes error messages much more useful for debugging and for clients:
+Custom errors belong on the constraint that can fail:
 
 ```rust
 #[account(
     mut,
-    has_one(maker) @ MyError::InvalidMaker,
-    constraints(escrow.receive > 0) @ MyError::ZeroReceiveAmount,
-    address = ADMIN @ MyError::Unauthorized,
+    has_one(authority) @ VaultError::WrongAuthority,
+    constraints(vault.balance >= amount) @ VaultError::InsufficientBalance,
 )]
-pub escrow: Account<Escrow>,
+pub vault: Account<Vault>,
 ```
 
-Without `@`, the defaults are `HasOneMismatch`, `ConstraintViolation`, and `AddressMismatch`.
+This keeps failures attributable to the policy that rejected the account.
 
-### `close`
+## When more than one owner is valid
 
-Closes an account after the instruction handler returns. Zeros the discriminator (prevents replay), drains all lamports to the destination account, and reassigns ownership to the System program.
+`Interface<T>` validates a program against a set of accepted program IDs.
+`InterfaceAccount<T>` applies the same idea to data accounts, then exposes the
+layout supported by the interface. Quasar's token interface uses this to accept
+SPL Token and Token-2022 without weakening the owner check to “anything.”
 
-Because `close` runs in the epilogue (after your handler), you can still read the account's data during execution:
+For protocols whose owners use different layouts, `resolve()` dispatches on
+the owner after the initial interface check. The result is still a borrowed
+view; the dispatch does not deserialize or allocate.
 
-```rust
-#[account(mut, close(dest = taker), address = Escrow::seeds(maker.address()))]
-pub escrow: Account<Escrow>,
-```
-
-### `realloc`
-
-Resizes account data at runtime. If growing, lamports are taken from the payer to maintain rent exemption. If shrinking, excess lamports are returned. The realloc payer falls back to the `init` payer, then to a field named `payer`:
-
-```rust
-#[account(realloc = new_size, realloc::payer = authority)]
-pub config: Account<MultisigConfig>,
-```
-
-### Token / Mint / ATA
-
-The `quasar-spl` crate provides account behaviors for SPL token accounts, mints, and associated token accounts. Each behavior validates existing account data and supplies the token-program-specific CPI setup during initialization:
-
-```rust
-// Token account -- initialized with a specific mint and authority
-#[account(
-    init,
-    payer = payer,
-    token(mint = mint, authority = authority, token_program = token_program)
-)]
-pub vault: Account<Token>,
-
-// Mint -- initialized with decimals and mint authority
-#[account(
-    init,
-    payer = payer,
-    mint(decimals = 6, authority = authority, token_program = token_program)
-)]
-pub mint: Account<Mint>,
-
-// Associated token account -- derived from mint + owner
-#[account(
-    init,
-    payer = payer,
-    associated_token(
-        mint = mint,
-        authority = owner,
-        token_program = token_program,
-        system_program = system_program,
-        ata_program = ata_program
-    )
-)]
-pub ata: Account<Token>,
-```
-
-See the [Account Constraints Reference](/docs/references/account-constraints) for the complete behavior arguments, including `freeze_authority` for `mint(...)`, plus the metadata and master-edition behaviors.
-
-## The Bumps Struct
-
-`#[derive(Accounts)]` generates a bumps struct with one `u8` field per typed PDA
-and a `<field>_signer` method on the accounts struct:
-
-```rust
-// Auto-generated for Take
-pub struct TakeBumps {
-    pub escrow: u8,
-}
-
-// Generated on Take:
-// pub fn escrow_signer(&self, bumps: &TakeBumps) -> impl CpiSignerSeeds
-```
-
-Use it in impl blocks:
-
-```rust
-pub fn withdraw_tokens_and_close(&mut self, bumps: &TakeBumps) -> Result<(), ProgramError> {
-    let escrow_signer = self.escrow_signer(bumps);
-
-    self.token_program
-        .transfer(&self.vault_ta_a, &self.taker_ta_a, &self.escrow, self.vault_ta_a.amount())
-        .invoke_signed(&escrow_signer)?;
-
-    self.token_program
-        .close_account(&self.vault_ta_a, &self.taker, &self.escrow)
-        .invoke_signed(&escrow_signer)
-}
-```
-
-## Validation Pipeline
-
-When an instruction is invoked:
-
-1. **Header validation** -- signer, writable, executable, and duplicate flags are checked against compile-time expectations in a single constant comparison per account.
-2. **Typed construction** -- each field is constructed from its `AccountView`.
-3. **PDA verification and initialization** -- typed `address = Type::seeds(...)` constraints are verified and initializing accounts are created.
-4. **Constraint evaluation** -- `has_one`, `constraints`, and `address` checks run in declaration order.
-5. **Epilogue** -- after the handler returns, `close` operations execute.
-
-## Next Steps
-
-- [Instructions](./instructions) -- the `#[instruction]` macro and argument handling
-- [Program Derived Addresses](./pda) -- typed seeds, bumps, and verification
-- [Cross-Program Invocations](./cpi) -- using accounts in CPI calls
-- [Account Constraints Reference](/docs/references/account-constraints) -- full attribute reference
+<Cards>
+  <Card title="Account types" href="/docs/references/account-types" description="Exact validation, methods, and examples for every built-in wrapper." />
+  <Card title="Account constraints" href="/docs/references/account-constraints" description="Syntax, requirements, errors, and lifecycle behavior for every field attribute." />
+</Cards>
