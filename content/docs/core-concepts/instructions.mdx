@@ -131,11 +131,12 @@ Same as `Ctx`, but also captures accounts beyond the declared set. Use this for 
 ```rust
 #[instruction(discriminator = 0)]
 pub fn create(ctx: CtxWithRemaining<Create>, threshold: u8) -> Result<(), ProgramError> {
-    ctx.accounts.create_multisig(threshold, &ctx.bumps, ctx.remaining_accounts())
+    let signers = ctx.remaining_accounts().parse::<Signer, 10>()?;
+    ctx.accounts.create_multisig(threshold, &ctx.bumps, signers)
 }
 ```
 
-`ctx.remaining_accounts()` returns a `RemainingAccounts` iterator that lazily parses accounts from the input buffer. Each account is validated on access -- no upfront cost for accounts you don't use.
+`ctx.remaining_accounts()` returns the raw trailing-account accessor. Parse a homogeneous list into `Remaining<T, N>` at the instruction boundary so the handler receives at most `N` values that already satisfy `T`. Keep the raw accessor for heterogeneous tails that require explicit per-entry checks.
 
 ## Instruction Data in Account Validation
 

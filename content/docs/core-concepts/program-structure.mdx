@@ -150,7 +150,8 @@ For instructions that forward a variable number of accounts to CPIs, use `CtxWit
 ```rust
 #[instruction(discriminator = 0)]
 pub fn create(ctx: CtxWithRemaining<Create>, threshold: u8) -> Result<(), ProgramError> {
-    ctx.accounts.create_multisig(threshold, &ctx.bumps, ctx.remaining_accounts())
+    let signers = ctx.remaining_accounts().parse::<Signer, 10>()?;
+    ctx.accounts.create_multisig(threshold, &ctx.bumps, signers)
 }
 ```
 
