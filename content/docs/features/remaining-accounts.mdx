@@ -136,7 +136,7 @@ pub struct MultisigVaultPda;
 #[derive(Accounts)]
 pub struct ExecuteTransfer<'info> {
     #[account(
-        has_one = creator,
+        has_one(creator),
         address = MultisigConfig::seeds(creator.address())
     )]
     pub config: Account<MultisigConfig<'info>>,

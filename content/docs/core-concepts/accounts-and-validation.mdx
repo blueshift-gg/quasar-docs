@@ -257,10 +257,10 @@ use the stored-bump verification path for later instructions.
 
 ### `has_one`
 
-Checks that a field stored in the account's data matches the address of another account in the struct. The field names must match -- if your account has a `maker: Address` field, then `has_one = maker` checks `escrow.maker == maker.address()`:
+Checks that a field stored in the account's data matches the address of another account in the struct. The field names must match -- if your account has a `maker: Address` field, then `has_one(maker)` checks `escrow.maker == maker.address()`:
 
 ```rust
-#[account(mut, has_one = maker, has_one = mint)]
+#[account(mut, has_one(maker, mint))]
 pub escrow: Account<Escrow>,
 pub maker: Signer,
 pub mint: Account<Mint>,
@@ -293,7 +293,7 @@ pub admin: Signer,
 ```rust
 #[account(
     mut,
-    has_one = maker @ MyError::InvalidMaker,
+    has_one(maker) @ MyError::InvalidMaker,
     constraint = escrow.receive > 0 @ MyError::ZeroReceiveAmount,
     address = ADMIN @ MyError::Unauthorized,
 )]

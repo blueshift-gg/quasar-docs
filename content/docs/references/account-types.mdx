@@ -50,7 +50,7 @@ pub struct Vault {
 
 #[derive(Accounts)]
 pub struct Deposit {
-    #[account(mut, has_one = authority)]
+    #[account(mut, has_one(authority))]
     pub vault: Account<Vault>,
     pub authority: Signer,
 }

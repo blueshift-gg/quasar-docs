@@ -43,7 +43,7 @@ pub struct Take {
     pub taker: Signer,
     #[account(
         mut,
-        has_one = maker,
+        has_one(maker),
         constraint = escrow.receive > 0,
         close = taker,
         address = Escrow::seeds(maker.address())
