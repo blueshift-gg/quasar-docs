@@ -71,14 +71,19 @@ If you have no reason to restrict to one program, prefer the interface types.
 
 ## Init with Interfaces
 
-The `token::mint` and `token::authority` attributes work with interface types. The token program used for initialization is inferred from the program account in your struct:
+The `token(...)` behavior works with interface types. Pass the token program field so initialization uses the program selected by the caller:
 
 ```rust
+use quasar_spl::accounts::token;
+
 #[derive(Accounts)]
 pub struct InitVault {
     #[account(mut)]
     pub payer: Signer,
-    #[account(init, token::mint = mint, token::authority = authority)]
+    #[account(
+        init,
+        token(mint = mint, authority = authority, token_program = token_program)
+    )]
     pub vault: InterfaceAccount<Token>,
     pub mint: InterfaceAccount<Mint>,
     pub authority: Signer,

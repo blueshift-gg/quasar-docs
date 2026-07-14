@@ -7,16 +7,28 @@ ATAs are deterministic token accounts derived from a wallet address and a mint (
 
 ## Declarative Initialization
 
-Use `init` with `associated_token::mint` and `associated_token::authority` to create an ATA. This invokes the ATA program's `Create` instruction via CPI:
+Use `init` with the `associated_token(...)` behavior to create an ATA. Initialization names the token, System, and ATA program fields used by the CPI:
 
 ```rust
-use quasar_spl::{AssociatedTokenProgram, Mint, Token, TokenProgram};
+use quasar_spl::{
+    accounts::associated_token,
+    AssociatedTokenProgram, Mint, Token, TokenProgram,
+};
 
 #[derive(Accounts)]
 pub struct InitAta {
     #[account(mut)]
     pub payer: Signer,
-    #[account(init, associated_token::mint = mint, associated_token::authority = wallet)]
+    #[account(
+        init,
+        associated_token(
+            mint = mint,
+            authority = wallet,
+            token_program = token_program,
+            system_program = system_program,
+            ata_program = ata_program
+        )
+    )]
     pub ata: Account<Token>,
     pub wallet: Signer,
     pub mint: Account<Mint>,
@@ -29,20 +41,33 @@ pub struct InitAta {
 Use `init(idempotent)` to create the account if it doesn't exist. For an existing account, Quasar validates that the mint and authority match:
 
 ```rust
-#[account(init(idempotent), associated_token::mint = mint, associated_token::authority = wallet)]
+#[account(
+    init(idempotent),
+    associated_token(
+        mint = mint,
+        authority = wallet,
+        token_program = token_program,
+        system_program = system_program,
+        ata_program = ata_program
+    )
+)]
 pub ata: Account<Token>,
 ```
 
-### associated_token vs token attributes
+### `associated_token(...)` vs `token(...)`
 
-`associated_token::*` creates an ATA at the deterministic PDA address (via the ATA program). `token::*` creates a generic token account (via `InitializeAccount3`). Use `associated_token::*` when you need the canonical ATA address.
+`associated_token(...)` creates an ATA at the deterministic PDA address through the ATA program. `token(...)` creates a generic token account through `InitializeAccount3`. Use `associated_token(...)` when you need the canonical ATA address.
 
 ## Validation Without Init
 
-To validate an existing ATA without creating it, use `associated_token::*` without `init`:
+To validate an existing ATA without creating it, use `associated_token(...)` without `init`. Validation needs the mint and authority; pass `token_program` to bind an interface account to a specific token program. The System and ATA programs are creation-only arguments.
 
 ```rust
-#[account(associated_token::mint = mint, associated_token::authority = wallet)]
+#[account(associated_token(
+    mint = mint,
+    authority = wallet,
+    token_program = token_program
+))]
 pub ata: Account<Token>,
 ```
 
